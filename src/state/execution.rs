@@ -6,7 +6,7 @@ use crate::transaction::{
     validation::{ValidationContext, ValidationError, validate_transaction},
 };
 
-use super::{State, StateError};
+use super::State;
 
 /// Errors returned when executing a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
