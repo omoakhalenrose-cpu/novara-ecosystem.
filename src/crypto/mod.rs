@@ -1,3 +1,7 @@
+//! NOVARA cryptographic foundation.
+
+pub mod ed25519;
+
 use sha2::{Digest, Sha256};
 
 /// Computes the SHA-256 hash of arbitrary data.
