@@ -59,3 +59,117 @@ pub fn validate_transaction(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account::address::AccountId;
+    use crate::crypto::ed25519::Ed25519Identity;
+    use crate::transaction::{
+        signing::sign_transaction,
+        AssetId,
+        ChainId,
+    };
+
+    fn setup() -> (
+        Transaction,
+        TransactionSignature,
+        ValidationContext,
+    ) {
+        let identity = Ed25519Identity::generate();
+
+        let sender = AccountId::try_from_ed25519_public_key(
+            NetworkId::Development,
+            &identity.public_key(),
+        )
+        .unwrap();
+
+        let chain_id = ChainId::new([4u8; 32]);
+
+        let transaction = Transaction::new(
+            1,
+            NetworkId::Development,
+            chain_id,
+            sender,
+            AccountId::new([2u8; 32]),
+            AssetId::new([3u8; 32]),
+            100,
+            0,
+        )
+        .unwrap();
+
+        let signature = sign_transaction(&transaction, &identity);
+
+        let context = ValidationContext {
+            network: NetworkId::Development,
+            chain_id,
+        };
+
+        (transaction, signature, context)
+    }
+
+    #[test]
+    fn valid_transaction_is_accepted() {
+        let (transaction, signature, context) = setup();
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn unsupported_version_is_rejected() {
+        let (mut transaction, signature, context) = setup();
+        transaction.version = 2;
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Err(ValidationError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn wrong_network_is_rejected() {
+        let (transaction, signature, mut context) = setup();
+        context.network = NetworkId::Testnet;
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Err(ValidationError::WrongNetwork)
+        );
+    }
+
+    #[test]
+    fn wrong_chain_is_rejected() {
+        let (transaction, signature, mut context) = setup();
+        context.chain_id = ChainId::new([9u8; 32]);
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Err(ValidationError::WrongChain)
+        );
+    }
+
+    #[test]
+    fn zero_amount_is_rejected() {
+        let (mut transaction, signature, context) = setup();
+        transaction.amount = 0;
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Err(ValidationError::ZeroAmount)
+        );
+    }
+
+    #[test]
+    fn modified_transaction_is_rejected() {
+        let (mut transaction, signature, context) = setup();
+        transaction.amount = 200;
+
+        assert_eq!(
+            validate_transaction(&transaction, &signature, &context),
+            Err(ValidationError::InvalidSignature)
+        );
+    }
+        }
