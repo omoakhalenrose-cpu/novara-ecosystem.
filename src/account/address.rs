@@ -107,5 +107,5 @@ mod tests {
         let result = AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &invalid_key);
 
         assert_eq!(result, Err(AccountIdError::InvalidPublicKey));
-    }
-            }
+    } 
+}
