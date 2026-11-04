@@ -1,0 +1,13 @@
+[package]
+name = "novara-node"
+version = "0.1.0"
+edition = "2024"
+description = "NOVARA independent Layer-1 blockchain"
+
+[lib]
+name = "novara"
+path = "src/lib.rs"
+
+[[bin]]
+name = "novara-node"
+path = "src/main.rs"
