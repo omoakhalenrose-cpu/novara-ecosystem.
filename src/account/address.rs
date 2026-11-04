@@ -57,17 +57,11 @@ mod tests {
         let identity = Ed25519Identity::generate();
         let public_key = identity.public_key();
 
-        let first = AccountId::try_from_ed25519_public_key(
-            NetworkId::Testnet,
-            &public_key,
-        )
-        .unwrap();
+        let first =
+            AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &public_key).unwrap();
 
-        let second = AccountId::try_from_ed25519_public_key(
-            NetworkId::Testnet,
-            &public_key,
-        )
-        .unwrap();
+        let second =
+            AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &public_key).unwrap();
 
         assert_eq!(first, second);
     }
@@ -77,17 +71,11 @@ mod tests {
         let identity = Ed25519Identity::generate();
         let public_key = identity.public_key();
 
-        let testnet = AccountId::try_from_ed25519_public_key(
-            NetworkId::Testnet,
-            &public_key,
-        )
-        .unwrap();
+        let testnet =
+            AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &public_key).unwrap();
 
-        let mainnet = AccountId::try_from_ed25519_public_key(
-            NetworkId::Mainnet,
-            &public_key,
-        )
-        .unwrap();
+        let mainnet =
+            AccountId::try_from_ed25519_public_key(NetworkId::Mainnet, &public_key).unwrap();
 
         assert_ne!(testnet, mainnet);
     }
@@ -116,9 +104,8 @@ mod tests {
     fn weak_public_key_is_rejected() {
         let invalid_key = [0u8; 32];
 
-        let result =
-            AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &invalid_key);
+        let result = AccountId::try_from_ed25519_public_key(NetworkId::Testnet, &invalid_key);
 
         assert_eq!(result, Err(AccountIdError::InvalidPublicKey));
     }
-}
+        }
