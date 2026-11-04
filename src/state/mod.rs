@@ -30,10 +30,7 @@ impl AccountState {
 
     /// Returns the balance of a particular asset.
     pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances
-            .get(asset_id.as_bytes())
-            .copied()
-            .unwrap_or(0)
+        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
     }
 }
 
