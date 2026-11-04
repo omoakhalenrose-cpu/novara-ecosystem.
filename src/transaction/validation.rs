@@ -2,8 +2,8 @@
 
 use crate::account::network::NetworkId;
 
-use super::signing::{SignatureError, TransactionSignature, verify_transaction_signature};
 use super::Transaction;
+use super::signing::{SignatureError, TransactionSignature, verify_transaction_signature};
 
 /// The currently supported transaction protocol version.
 pub const SUPPORTED_TRANSACTION_VERSION: u16 = 1;
