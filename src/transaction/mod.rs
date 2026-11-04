@@ -9,7 +9,6 @@ use super::Transaction;
 pub struct TransactionSignature {
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
-    pub mod validation;
 }
 
 /// Errors returned during transaction signature verification.
@@ -56,7 +55,7 @@ mod tests {
         address::AccountId,
         network::NetworkId,
     };
-    use super::super::{AssetId, ChainId, TransactionError};
+    use super::super::{AssetId, ChainId};
 
     fn create_transaction() -> Transaction {
         Transaction::new(
@@ -76,7 +75,6 @@ mod tests {
     fn valid_transaction_signature_is_accepted() {
         let identity = Ed25519Identity::generate();
         let transaction = create_transaction();
-
         let signed = sign_transaction(&transaction, &identity);
 
         assert_eq!(
@@ -89,7 +87,6 @@ mod tests {
     fn modified_transaction_signature_is_rejected() {
         let identity = Ed25519Identity::generate();
         let transaction = create_transaction();
-
         let signed = sign_transaction(&transaction, &identity);
 
         let mut modified_transaction = transaction.clone();
