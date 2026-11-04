@@ -9,6 +9,7 @@ use super::Transaction;
 pub struct TransactionSignature {
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
+    pub mod validation;
 }
 
 /// Errors returned during transaction signature verification.
