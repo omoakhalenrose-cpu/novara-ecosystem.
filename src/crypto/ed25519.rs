@@ -28,11 +28,7 @@ impl Ed25519Identity {
     }
 
     /// Verifies a signature against a public key.
-    pub fn verify(
-        public_key: &[u8; 32],
-        message: &[u8],
-        signature: &[u8; 64],
-    ) -> bool {
+    pub fn verify(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
         use ed25519_dalek::Verifier;
 
         let verifying_key = match VerifyingKey::from_bytes(public_key) {
