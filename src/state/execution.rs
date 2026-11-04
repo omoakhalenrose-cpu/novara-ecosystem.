@@ -107,34 +107,19 @@ impl State {
 mod tests {
     use super::*;
 
-    use crate::account::{
-        address::AccountId,
-        network::NetworkId,
-    };
+    use crate::account::{address::AccountId, network::NetworkId};
     use crate::crypto::ed25519::Ed25519Identity;
-    use crate::transaction::{
-        AssetId,
-        ChainId,
-        Transaction,
-        signing::sign_transaction,
-    };
+    use crate::transaction::{AssetId, ChainId, Transaction, signing::sign_transaction};
 
     fn setup(
         amount: u128,
         nonce: u64,
-    ) -> (
-        State,
-        Transaction,
-        TransactionSignature,
-        ValidationContext,
-    ) {
+    ) -> (State, Transaction, TransactionSignature, ValidationContext) {
         let identity = Ed25519Identity::generate();
 
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let recipient = AccountId::new([2u8; 32]);
         let asset = AssetId::new([3u8; 32]);
@@ -171,12 +156,7 @@ mod tests {
             .balances
             .insert(*asset.as_bytes(), 1_000);
 
-        (
-            state,
-            transaction,
-            signature,
-            context,
-        )
+        (state, transaction, signature, context)
     }
 
     #[test]
@@ -203,7 +183,7 @@ mod tests {
 
     #[test]
     fn insufficient_balance_is_rejected_without_state_change() {
-        let (mut state, mut transaction, signature, context) = setup(1_001, 0);
+        let (mut state, transaction, signature, context) = setup(1_001, 0);
 
         let before = state.clone();
 
@@ -213,8 +193,6 @@ mod tests {
         );
 
         assert_eq!(state, before);
-
-        transaction.amount = 1;
     }
 
     #[test]
