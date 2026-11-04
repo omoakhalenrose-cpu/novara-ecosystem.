@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::account::address::AccountId;
 use crate::transaction::AssetId;
+pub mod execution;
 
 /// Stores the state belonging to one account.
 #[derive(Debug, Clone, PartialEq, Eq)]
