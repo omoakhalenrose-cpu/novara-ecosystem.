@@ -57,6 +57,7 @@ pub enum TransactionError {
 
 impl Transaction {
     /// Creates a transaction after checking its basic amount requirement.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: u16,
         network: NetworkId,
