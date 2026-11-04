@@ -143,4 +143,29 @@ mod tests {
         let transaction = sample_transaction(500).unwrap();
 
         assert_eq!(transaction.asset_id, AssetId::new([3u8; 32]));
+    }
+
+    #[test]
+    fn canonical_encoding_is_deterministic() {
+        let transaction = sample_transaction(100).unwrap();
+
+        assert_eq!(transaction.encode(), transaction.encode());
+    }
+
+    #[test]
+    fn canonical_encoding_contains_domain_separator() {
+        let transaction = sample_transaction(100).unwrap();
+
+        assert!(transaction.encode().starts_with(TRANSACTION_DOMAIN));
+    }
+
+    #[test]
+    fn canonical_encoding_contains_chain_identifier() {
+        let transaction = sample_transaction(100).unwrap();
+        let encoded = transaction.encode();
+
+        let chain_id_start = TRANSACTION_DOMAIN.len() + 2 + 1;
+
+        assert_eq!(&encoded[chain_id_start..chain_id_start + 32], &[4u8; 32]);
+    }
 }
