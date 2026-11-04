@@ -3,6 +3,7 @@
 //! This library will contain NOVARA's core protocol components.
 
 pub mod crypto;
+pub mod account;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
