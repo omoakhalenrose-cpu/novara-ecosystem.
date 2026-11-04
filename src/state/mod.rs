@@ -2,7 +2,6 @@
 
 use crate::account::{address::AccountId, network::NetworkId};
 
-pub mod signing;
 pub mod validation;
 
 /// Domain separator for NOVARA transaction encoding version 1.
