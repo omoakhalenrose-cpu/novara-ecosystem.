@@ -61,3 +61,17 @@ fn one_user_cannot_verify_another_users_signature() {
         &signature
     ));
 }
+#[test]
+fn generated_public_key_is_valid() {
+    let identity = Ed25519Identity::generate();
+    let public_key = identity.public_key();
+
+    assert!(Ed25519Identity::is_valid_public_key(&public_key));
+}
+
+#[test]
+fn invalid_public_key_is_rejected() {
+    let invalid_key = [0u8; 32];
+
+    assert!(!Ed25519Identity::is_valid_public_key(&invalid_key));
+}
