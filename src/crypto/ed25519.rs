@@ -25,6 +25,10 @@ impl Ed25519Identity {
     pub fn public_key(&self) -> [u8; 32] {
         self.signing_key.verifying_key().to_bytes()
     }
+        /// Checks whether bytes represent a valid Ed25519 public key.
+    pub fn is_valid_public_key(public_key: &[u8; 32]) -> bool {
+        VerifyingKey::from_bytes(public_key).is_ok()
+    }
 
     /// Signs a message using this identity's private key.
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
