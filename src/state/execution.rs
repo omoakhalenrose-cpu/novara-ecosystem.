@@ -43,11 +43,7 @@ impl State {
             return Err(ExecutionError::NonceMismatch);
         }
 
-        let sender_balance = sender
-            .balances
-            .get(&asset_key)
-            .copied()
-            .unwrap_or(0);
+        let sender_balance = sender.balances.get(&asset_key).copied().unwrap_or(0);
 
         if sender_balance < transaction.amount {
             return Err(ExecutionError::InsufficientBalance);
