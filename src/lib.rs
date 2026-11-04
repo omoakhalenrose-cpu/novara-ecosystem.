@@ -1,6 +1,6 @@
 //! NOVARA — Independent Layer-1 blockchain.
-
-pub mod crypto;
+//!
+//! This library will contain NOVARA's core protocol components.
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
