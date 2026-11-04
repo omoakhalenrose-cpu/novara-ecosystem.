@@ -87,9 +87,8 @@ impl Transaction {
     ///
     /// All multi-byte integers use big-endian byte order.
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(
-            TRANSACTION_DOMAIN.len() + 2 + 1 + 32 + 32 + 32 + 32 + 16 + 8,
-        );
+        let mut bytes =
+            Vec::with_capacity(TRANSACTION_DOMAIN.len() + 2 + 1 + 32 + 32 + 32 + 32 + 16 + 8);
 
         bytes.extend_from_slice(TRANSACTION_DOMAIN);
         bytes.extend_from_slice(&self.version.to_be_bytes());
