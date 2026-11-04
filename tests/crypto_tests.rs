@@ -42,11 +42,7 @@ fn ed25519_signature_verifies() {
     let public_key = alice.public_key();
     let signature = alice.sign(message);
 
-    assert!(Ed25519Identity::verify(
-        &public_key,
-        message,
-        &signature
-    ));
+    assert!(Ed25519Identity::verify(&public_key, message, &signature));
 }
 
 #[test]
