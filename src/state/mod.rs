@@ -1,103 +1,107 @@
-//! NOVARA application state foundation.
-//!
-//! This module stores account balances and transaction nonces.
-//! It supports multiple digital assets per account.
+//! NOVARA transaction data model and canonical encoding.
 
-use std::collections::BTreeMap;
+use crate::account::{address::AccountId, network::NetworkId};
 
-use crate::account::address::AccountId;
-use crate::transaction::AssetId;
+pub mod signing;
+pub mod validation;
 
-/// Stores the state belonging to one account.
+/// Domain separator for NOVARA transaction encoding version 1.
+const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
+
+/// Identifies a digital asset supported by NOVARA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AssetId(pub [u8; 32]);
+
+impl AssetId {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+/// Identifies a particular NOVARA chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChainId(pub [u8; 32]);
+
+impl ChainId {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+/// Represents a NOVARA transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccountState {
-    balances: BTreeMap<[u8; 32], u128>,
-    nonce: u64,
+pub struct Transaction {
+    pub version: u16,
+    pub network: NetworkId,
+    pub chain_id: ChainId,
+    pub sender: AccountId,
+    pub recipient: AccountId,
+    pub asset_id: AssetId,
+    pub amount: u128,
+    pub nonce: u64,
 }
 
-impl AccountState {
-    fn new() -> Self {
-        Self {
-            balances: BTreeMap::new(),
-            nonce: 0,
-        }
-    }
-
-    /// Returns the account's current transaction nonce.
-    pub const fn nonce(&self) -> u64 {
-        self.nonce
-    }
-
-    /// Returns the balance of a particular asset.
-    pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
-    }
-}
-
-/// Errors returned by application state operations.
+/// Errors returned when constructing a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateError {
-    AccountAlreadyExists,
-    AccountNotFound,
+pub enum TransactionError {
+    ZeroAmount,
 }
 
-/// Stores NOVARA's application state.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct State {
-    accounts: BTreeMap<[u8; 32], AccountState>,
-}
-
-impl State {
-    /// Creates an empty application state.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a new account in application state.
-    pub fn create_account(&mut self, account_id: AccountId) -> Result<(), StateError> {
-        let key = *account_id.as_bytes();
-
-        if self.accounts.contains_key(&key) {
-            return Err(StateError::AccountAlreadyExists);
+impl Transaction {
+    /// Creates a transaction after checking its basic amount requirement.
+    pub fn new(
+        version: u16,
+        network: NetworkId,
+        chain_id: ChainId,
+        sender: AccountId,
+        recipient: AccountId,
+        asset_id: AssetId,
+        amount: u128,
+        nonce: u64,
+    ) -> Result<Self, TransactionError> {
+        if amount == 0 {
+            return Err(TransactionError::ZeroAmount);
         }
 
-        self.accounts.insert(key, AccountState::new());
-
-        Ok(())
+        Ok(Self {
+            version,
+            network,
+            chain_id,
+            sender,
+            recipient,
+            asset_id,
+            amount,
+            nonce,
+        })
     }
 
-    /// Checks whether an account exists.
-    pub fn account_exists(&self, account_id: &AccountId) -> bool {
-        self.accounts.contains_key(account_id.as_bytes())
-    }
+    /// Encodes the transaction into its canonical byte representation.
+    ///
+    /// All multi-byte integers use big-endian byte order.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(
+            TRANSACTION_DOMAIN.len() + 2 + 1 + 32 + 32 + 32 + 32 + 16 + 8,
+        );
 
-    /// Returns an account's current balance for an asset.
-    pub fn balance_of(
-        &self,
-        account_id: &AccountId,
-        asset_id: &AssetId,
-    ) -> Result<u128, StateError> {
-        let account = self
-            .accounts
-            .get(account_id.as_bytes())
-            .ok_or(StateError::AccountNotFound)?;
+        bytes.extend_from_slice(TRANSACTION_DOMAIN);
+        bytes.extend_from_slice(&self.version.to_be_bytes());
+        bytes.push(self.network.as_byte());
+        bytes.extend_from_slice(self.chain_id.as_bytes());
+        bytes.extend_from_slice(self.sender.as_bytes());
+        bytes.extend_from_slice(self.recipient.as_bytes());
+        bytes.extend_from_slice(self.asset_id.as_bytes());
+        bytes.extend_from_slice(&self.amount.to_be_bytes());
+        bytes.extend_from_slice(&self.nonce.to_be_bytes());
 
-        Ok(account.balance(asset_id))
-    }
-
-    /// Returns an account's current transaction nonce.
-    pub fn nonce_of(&self, account_id: &AccountId) -> Result<u64, StateError> {
-        let account = self
-            .accounts
-            .get(account_id.as_bytes())
-            .ok_or(StateError::AccountNotFound)?;
-
-        Ok(account.nonce())
-    }
-
-    /// Returns the number of accounts stored in the state.
-    pub fn account_count(&self) -> usize {
-        self.accounts.len()
+        bytes
     }
 }
 
@@ -105,66 +109,63 @@ impl State {
 mod tests {
     use super::*;
 
-    fn sample_account(value: u8) -> AccountId {
-        AccountId::new([value; 32])
+    fn sample_transaction(amount: u128) -> Result<Transaction, TransactionError> {
+        Transaction::new(
+            1,
+            NetworkId::Development,
+            ChainId::new([4u8; 32]),
+            AccountId::new([1u8; 32]),
+            AccountId::new([2u8; 32]),
+            AssetId::new([3u8; 32]),
+            amount,
+            0,
+        )
     }
 
     #[test]
-    fn new_state_contains_no_accounts() {
-        let state = State::new();
+    fn transaction_is_created_with_valid_amount() {
+        let transaction = sample_transaction(100).unwrap();
 
-        assert_eq!(state.account_count(), 0);
+        assert_eq!(transaction.amount, 100);
+        assert_eq!(transaction.version, 1);
+        assert_eq!(transaction.nonce, 0);
     }
 
     #[test]
-    fn account_can_be_created() {
-        let mut state = State::new();
-        let account = sample_account(1);
+    fn zero_amount_is_rejected() {
+        let result = sample_transaction(0);
 
-        assert_eq!(state.create_account(account), Ok(()));
-        assert!(state.account_exists(&account));
+        assert_eq!(result, Err(TransactionError::ZeroAmount));
     }
 
     #[test]
-    fn duplicate_account_creation_is_rejected() {
-        let mut state = State::new();
-        let account = sample_account(1);
+    fn transaction_preserves_asset_identifier() {
+        let transaction = sample_transaction(500).unwrap();
 
-        assert_eq!(state.create_account(account), Ok(()));
-
-        assert_eq!(
-            state.create_account(account),
-            Err(StateError::AccountAlreadyExists)
-        );
+        assert_eq!(transaction.asset_id, AssetId::new([3u8; 32]));
     }
 
     #[test]
-    fn new_account_starts_with_zero_nonce() {
-        let mut state = State::new();
-        let account = sample_account(1);
+    fn canonical_encoding_is_deterministic() {
+        let transaction = sample_transaction(100).unwrap();
 
-        state.create_account(account).unwrap();
-
-        assert_eq!(state.nonce_of(&account), Ok(0));
+        assert_eq!(transaction.encode(), transaction.encode());
     }
 
     #[test]
-    fn new_account_has_zero_asset_balance() {
-        let mut state = State::new();
-        let account = sample_account(1);
-        let asset = AssetId::new([5u8; 32]);
+    fn canonical_encoding_contains_domain_separator() {
+        let transaction = sample_transaction(100).unwrap();
 
-        state.create_account(account).unwrap();
-
-        assert_eq!(state.balance_of(&account, &asset), Ok(0));
+        assert!(transaction.encode().starts_with(TRANSACTION_DOMAIN));
     }
 
     #[test]
-    fn missing_account_returns_error() {
-        let state = State::new();
-        let account = sample_account(1);
-assert_eq!
-       (state.nonce_of(&account), 
-       Err(StateError::AccountNotFound));
+    fn canonical_encoding_contains_chain_identifier() {
+        let transaction = sample_transaction(100).unwrap();
+        let encoded = transaction.encode();
+
+        let chain_id_start = TRANSACTION_DOMAIN.len() + 2 + 1;
+
+        assert_eq!(&encoded[chain_id_start..chain_id_start + 32], &[4u8; 32]);
     }
 }
