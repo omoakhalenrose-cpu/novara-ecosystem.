@@ -163,7 +163,8 @@ mod tests {
     fn missing_account_returns_error() {
         let state = State::new();
         let account = sample_account(1);
-
-        assert_eq!(state.nonce_of(&account), Err(StateError::AccountNotFound));
+assert_eq!
+       (state.nonce_of(&account), 
+       Err(StateError::AccountNotFound));
     }
 }
