@@ -30,10 +30,7 @@ impl AccountState {
 
     /// Returns the balance of a particular asset.
     pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances
-            .get(asset_id.as_bytes())
-            .copied()
-            .unwrap_or(0)
+        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
     }
 }
 
@@ -57,10 +54,7 @@ impl State {
     }
 
     /// Creates a new account in application state.
-    pub fn create_account(
-        &mut self,
-        account_id: AccountId,
-    ) -> Result<(), StateError> {
+    pub fn create_account(&mut self, account_id: AccountId) -> Result<(), StateError> {
         let key = *account_id.as_bytes();
 
         if self.accounts.contains_key(&key) {
@@ -92,10 +86,7 @@ impl State {
     }
 
     /// Returns an account's current transaction nonce.
-    pub fn nonce_of(
-        &self,
-        account_id: &AccountId,
-    ) -> Result<u64, StateError> {
+    pub fn nonce_of(&self, account_id: &AccountId) -> Result<u64, StateError> {
         let account = self
             .accounts
             .get(account_id.as_bytes())
@@ -173,9 +164,6 @@ mod tests {
         let state = State::new();
         let account = sample_account(1);
 
-        assert_eq!(
-            state.nonce_of(&account),
-            Err(StateError::AccountNotFound)
-        );
+        assert_eq!(state.nonce_of(&account), Err(StateError::AccountNotFound));
     }
 }
