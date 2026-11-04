@@ -38,11 +38,7 @@ pub fn verify_transaction_signature(
     transaction: &Transaction,
     signed: &TransactionSignature,
 ) -> Result<(), SignatureError> {
-    if !Ed25519Identity::verify(
-        &signed.public_key,
-        &transaction.encode(),
-        &signed.signature,
-    ) {
+    if !Ed25519Identity::verify(&signed.public_key, &transaction.encode(), &signed.signature) {
         return Err(SignatureError::InvalidSignature);
     }
 
@@ -60,16 +56,14 @@ pub fn verify_transaction_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::network::NetworkId;
     use crate::account::address::AccountId;
+    use crate::account::network::NetworkId;
     use crate::transaction::{AssetId, ChainId, Transaction};
 
     fn create_transaction(identity: &Ed25519Identity) -> Transaction {
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         Transaction::new(
             1,
@@ -90,10 +84,7 @@ mod tests {
         let transaction = create_transaction(&identity);
         let signed = sign_transaction(&transaction, &identity);
 
-        assert_eq!(
-            verify_transaction_signature(&transaction, &signed),
-            Ok(())
-        );
+        assert_eq!(verify_transaction_signature(&transaction, &signed), Ok(()));
     }
 
     #[test]
