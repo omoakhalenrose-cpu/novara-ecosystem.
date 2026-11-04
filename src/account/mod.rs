@@ -1,6 +1,7 @@
 //! NOVARA account model.
 
 pub mod address;
+pub mod network;
 
 use address::AccountId;
 
