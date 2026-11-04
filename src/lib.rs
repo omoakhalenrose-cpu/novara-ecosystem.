@@ -4,8 +4,8 @@
 
 pub mod account;
 pub mod crypto;
-pub mod transaction;
 pub mod state;
+pub mod transaction;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
