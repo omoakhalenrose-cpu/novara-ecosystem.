@@ -26,9 +26,12 @@ impl Ed25519Identity {
         self.signing_key.verifying_key().to_bytes()
     }
 
-    /// Checks whether bytes represent a valid Ed25519 public key.
+    /// Checks whether bytes represent a valid, non-weak Ed25519 public key.
     pub fn is_valid_public_key(public_key: &[u8; 32]) -> bool {
-        VerifyingKey::from_bytes(public_key).is_ok()
+        match VerifyingKey::from_bytes(public_key) {
+            Ok(key) => !key.is_weak(),
+            Err(_) => false,
+        }
     }
 
     /// Signs a message using this identity's private key.
@@ -43,8 +46,8 @@ impl Ed25519Identity {
         use ed25519_dalek::Verifier;
 
         let verifying_key = match VerifyingKey::from_bytes(public_key) {
-            Ok(key) => key,
-            Err(_) => return false,
+            Ok(key) if !key.is_weak() => key,
+            _ => return false,
         };
 
         let signature = ed25519_dalek::Signature::from_bytes(signature);
