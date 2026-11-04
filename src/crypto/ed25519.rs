@@ -1,7 +1,7 @@
 //! NOVARA Ed25519 cryptographic identity.
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 
 /// Represents an independently generated Ed25519 identity.
 pub struct Ed25519Identity {
@@ -11,7 +11,13 @@ pub struct Ed25519Identity {
 impl Ed25519Identity {
     /// Generates a new identity using secure operating-system randomness.
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut secret_key = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_key);
+
+        let signing_key = SigningKey::from_bytes(&secret_key);
+
+        secret_key.fill(0);
+
         Self { signing_key }
     }
 
