@@ -1,6 +1,8 @@
 //! NOVARA account model.
-//!
-//! Defines the three account categories supported by NOVARA.
+
+pub mod address;
+
+use address::AccountId;
 
 /// Identifies the category of a NOVARA account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +15,6 @@ pub enum AccountType {
 /// Represents a NOVARA account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
-    pub address: String,
+    pub id: AccountId,
     pub account_type: AccountType,
 }
