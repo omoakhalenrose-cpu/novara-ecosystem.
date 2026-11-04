@@ -1,9 +1,6 @@
 //! NOVARA transaction data model and canonical encoding.
 
 use crate::account::{address::AccountId, network::NetworkId};
-
-pub mod validation;
-
 /// Domain separator for NOVARA transaction encoding version 1.
 const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
 
