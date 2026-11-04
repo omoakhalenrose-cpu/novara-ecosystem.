@@ -2,11 +2,7 @@
 
 use crate::account::network::NetworkId;
 
-use super::signing::{
-    verify_transaction_signature,
-    SignatureError,
-    TransactionSignature,
-};
+use super::signing::{SignatureError, TransactionSignature, verify_transaction_signature};
 use super::Transaction;
 
 /// The currently supported transaction protocol version.
@@ -52,11 +48,9 @@ pub fn validate_transaction(
         return Err(ValidationError::ZeroAmount);
     }
 
-    verify_transaction_signature(transaction, signature).map_err(|error| {
-        match error {
-            SignatureError::InvalidSignature => ValidationError::InvalidSignature,
-            SignatureError::SenderMismatch => ValidationError::SenderMismatch,
-        }
+    verify_transaction_signature(transaction, signature).map_err(|error| match error {
+        SignatureError::InvalidSignature => ValidationError::InvalidSignature,
+        SignatureError::SenderMismatch => ValidationError::SenderMismatch,
     })?;
 
     Ok(())
@@ -67,24 +61,14 @@ mod tests {
     use super::*;
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
-    use crate::transaction::{
-        signing::sign_transaction,
-        AssetId,
-        ChainId,
-    };
+    use crate::transaction::{AssetId, ChainId, signing::sign_transaction};
 
-    fn setup() -> (
-        Transaction,
-        TransactionSignature,
-        ValidationContext,
-    ) {
+    fn setup() -> (Transaction, TransactionSignature, ValidationContext) {
         let identity = Ed25519Identity::generate();
 
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let chain_id = ChainId::new([4u8; 32]);
 
