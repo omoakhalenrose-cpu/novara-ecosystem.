@@ -1,114 +1,63 @@
-//! NOVARA transaction data model and canonical encoding.
+//! NOVARA transaction signing and signature verification.
 
-use crate::account::{address::AccountId, network::NetworkId};
+use crate::crypto::ed25519::Ed25519Identity;
 
-pub mod signing;
+use super::Transaction;
 
-/// Domain separator for NOVARA transaction encoding version 1.
-const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
-
-/// Identifies a digital asset supported by NOVARA.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AssetId(pub [u8; 32]);
-
-impl AssetId {
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-/// Identifies a particular NOVARA chain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChainId(pub [u8; 32]);
-
-impl ChainId {
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-/// Represents a NOVARA transaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Transaction {
-    pub version: u16,
-    pub network: NetworkId,
-    pub chain_id: ChainId,
-    pub sender: AccountId,
-    pub recipient: AccountId,
-    pub asset_id: AssetId,
-    pub amount: u128,
-    pub nonce: u64,
-}
-
-/// Errors returned when constructing a transaction.
+/// A digital signature attached to a NOVARA transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransactionError {
-    ZeroAmount,
+pub struct TransactionSignature {
+    pub public_key: [u8; 32],
+    pub signature: [u8; 64],
 }
 
-impl Transaction {
-    /// Creates a transaction after checking its basic amount requirement.
-    pub fn new(
-        version: u16,
-        network: NetworkId,
-        chain_id: ChainId,
-        sender: AccountId,
-        recipient: AccountId,
-        asset_id: AssetId,
-        amount: u128,
-        nonce: u64,
-    ) -> Result<Self, TransactionError> {
-        if amount == 0 {
-            return Err(TransactionError::ZeroAmount);
-        }
+/// Errors returned during transaction signature verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureError {
+    InvalidSignature,
+}
 
-        Ok(Self {
-            version,
-            network,
-            chain_id,
-            sender,
-            recipient,
-            asset_id,
-            amount,
-            nonce,
-        })
+/// Signs a transaction using an Ed25519 identity.
+pub fn sign_transaction(
+    transaction: &Transaction,
+    identity: &Ed25519Identity,
+) -> TransactionSignature {
+    let message = transaction.encode();
+
+    TransactionSignature {
+        public_key: identity.public_key(),
+        signature: identity.sign(&message),
     }
+}
 
-    /// Encodes the transaction into its canonical byte representation.
-    ///
-    /// All multi-byte integers use big-endian byte order.
-    pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(
-            TRANSACTION_DOMAIN.len() + 2 + 1 + 32 + 32 + 32 + 32 + 16 + 8,
-        );
+/// Verifies a transaction's digital signature.
+pub fn verify_transaction_signature(
+    transaction: &Transaction,
+    signed: &TransactionSignature,
+) -> Result<(), SignatureError> {
+    let message = transaction.encode();
 
-        bytes.extend_from_slice(TRANSACTION_DOMAIN);
-        bytes.extend_from_slice(&self.version.to_be_bytes());
-        bytes.push(self.network.as_byte());
-        bytes.extend_from_slice(self.chain_id.as_bytes());
-        bytes.extend_from_slice(self.sender.as_bytes());
-        bytes.extend_from_slice(self.recipient.as_bytes());
-        bytes.extend_from_slice(self.asset_id.as_bytes());
-        bytes.extend_from_slice(&self.amount.to_be_bytes());
-        bytes.extend_from_slice(&self.nonce.to_be_bytes());
-
-        bytes
+    if Ed25519Identity::verify(
+        &signed.public_key,
+        &message,
+        &signed.signature,
+    ) {
+        Ok(())
+    } else {
+        Err(SignatureError::InvalidSignature)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::{
+        address::AccountId,
+        network::NetworkId,
+    };
+    use super::super::{AssetId, ChainId, TransactionError};
 
-    fn sample_transaction(amount: u128) -> Result<Transaction, TransactionError> {
+    fn create_transaction() -> Transaction {
         Transaction::new(
             1,
             NetworkId::Development,
@@ -116,58 +65,53 @@ mod tests {
             AccountId::new([1u8; 32]),
             AccountId::new([2u8; 32]),
             AssetId::new([3u8; 32]),
-            amount,
+            100,
             0,
         )
+        .unwrap()
     }
 
     #[test]
-    fn transaction_is_created_with_valid_amount() {
-        let transaction = sample_transaction(100).unwrap();
+    fn valid_transaction_signature_is_accepted() {
+        let identity = Ed25519Identity::generate();
+        let transaction = create_transaction();
 
-        assert_eq!(transaction.amount, 100);
-        assert_eq!(transaction.version, 1);
-        assert_eq!(transaction.nonce, 0);
-    }
-
-    #[test]
-    fn zero_amount_is_rejected() {
-        let result = sample_transaction(0);
-
-        assert_eq!(result, Err(TransactionError::ZeroAmount));
-    }
-
-    #[test]
-    fn transaction_preserves_asset_identifier() {
-        let transaction = sample_transaction(500).unwrap();
-
-        assert_eq!(transaction.asset_id, AssetId::new([3u8; 32]));
-    }
-
-    #[test]
-    fn canonical_encoding_is_deterministic() {
-        let transaction = sample_transaction(100).unwrap();
-
-        assert_eq!(transaction.encode(), transaction.encode());
-    }
-
-    #[test]
-    fn canonical_encoding_contains_domain_separator() {
-        let transaction = sample_transaction(100).unwrap();
-
-        assert!(transaction.encode().starts_with(TRANSACTION_DOMAIN));
-    }
-
-    #[test]
-    fn canonical_encoding_contains_chain_identifier() {
-        let transaction = sample_transaction(100).unwrap();
-        let encoded = transaction.encode();
-
-        let chain_id_start = TRANSACTION_DOMAIN.len() + 2 + 1;
+        let signed = sign_transaction(&transaction, &identity);
 
         assert_eq!(
-            &encoded[chain_id_start..chain_id_start + 32],
-            &[4u8; 32]
+            verify_transaction_signature(&transaction, &signed),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn modified_transaction_signature_is_rejected() {
+        let identity = Ed25519Identity::generate();
+        let transaction = create_transaction();
+
+        let signed = sign_transaction(&transaction, &identity);
+
+        let mut modified_transaction = transaction.clone();
+        modified_transaction.amount = 200;
+
+        assert_eq!(
+            verify_transaction_signature(&modified_transaction, &signed),
+            Err(SignatureError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn signature_from_another_identity_is_rejected() {
+        let first_identity = Ed25519Identity::generate();
+        let second_identity = Ed25519Identity::generate();
+        let transaction = create_transaction();
+
+        let mut signed = sign_transaction(&transaction, &first_identity);
+        signed.public_key = second_identity.public_key();
+
+        assert_eq!(
+            verify_transaction_signature(&transaction, &signed),
+            Err(SignatureError::InvalidSignature)
         );
     }
 }
