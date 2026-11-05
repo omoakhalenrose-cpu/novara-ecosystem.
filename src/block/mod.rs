@@ -249,9 +249,10 @@ fn decode_transaction(bytes: &[u8]) -> Result<Transaction, BlockDecodeError> {
     }
 
     Transaction::new(
-    version, network, chain_id, sender, recipient, asset_id, amount, nonce,
-)
-.map_err(|_| BlockDecodeError::InvalidTransaction)
+        version, network, chain_id, sender, recipient, asset_id, amount, nonce,
+    )
+    .map_err(|_| BlockDecodeError::InvalidTransaction)
+}
 
 /// Reads fixed-size values safely from a byte slice.
 struct ByteReader<'a> {
