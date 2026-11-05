@@ -4,9 +4,8 @@ use sha2::{Digest, Sha256};
 
 use crate::account::network::NetworkId;
 use crate::genesis::GenesisHash;
-use crate::transaction::{
-    AssetId, ChainId, Transaction, TransactionSignature,
-};
+use crate::transaction::signing::TransactionSignature;
+use crate::transaction::{AssetId, ChainId, Transaction};
 
 pub mod validation;
 
@@ -270,10 +269,7 @@ struct ByteReader<'a> {
 
 impl<'a> ByteReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            position: 0,
-        }
+        Self { bytes, position: 0 }
     }
 
     fn remaining(&self) -> usize {
@@ -322,16 +318,10 @@ impl<'a> ByteReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genesis::{
-        GenesisAllocation, GenesisConfig, InitializedGenesis,
-    };
+    use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
 
     fn test_genesis() -> InitializedGenesis {
-        InitializedGenesis::new(GenesisConfig::new(
-            NetworkId::Development,
-            Vec::new(),
-        ))
-        .unwrap()
+        InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
     }
 
     fn empty_block(genesis: &InitializedGenesis) -> Block {
