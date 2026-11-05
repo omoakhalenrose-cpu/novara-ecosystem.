@@ -33,10 +33,7 @@ impl AccountState {
 
     /// Returns the balance of a particular asset.
     pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances
-            .get(asset_id.as_bytes())
-            .copied()
-            .unwrap_or(0)
+        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
     }
 }
 
@@ -67,9 +64,7 @@ impl State {
     }
 
     /// Initializes application state from a validated genesis configuration.
-    pub fn from_genesis(
-        config: &GenesisConfig,
-    ) -> Result<Self, GenesisInitializationError> {
+    pub fn from_genesis(config: &GenesisConfig) -> Result<Self, GenesisInitializationError> {
         config
             .validate()
             .map_err(GenesisInitializationError::InvalidConfiguration)?;
@@ -85,11 +80,7 @@ impl State {
                 .entry(account_key)
                 .or_insert_with(AccountState::new);
 
-            let current_balance = account
-                .balances
-                .get(&asset_key)
-                .copied()
-                .unwrap_or(0);
+            let current_balance = account.balances.get(&asset_key).copied().unwrap_or(0);
 
             let new_balance = current_balance
                 .checked_add(allocation.amount)
