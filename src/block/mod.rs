@@ -182,8 +182,8 @@ impl Block {
         for _ in 0..transaction_count {
             let transaction_length = reader.read_u64()?;
 
-            let transaction_length = usize::try_from(transaction_length)
-                .map_err(|_| BlockDecodeError::InvalidFormat)?;
+            let transaction_length =
+                usize::try_from(transaction_length).map_err(|_| BlockDecodeError::InvalidFormat)?;
 
             let transaction_bytes = reader.read_exact(transaction_length)?;
 
@@ -248,17 +248,8 @@ fn decode_transaction(bytes: &[u8]) -> Result<Transaction, BlockDecodeError> {
         return Err(BlockDecodeError::InvalidTransaction);
     }
 
-    Transaction::new(
-        version,
-        network,
-        chain_id,
-        sender,
-        recipient,
-        asset_id,
-        amount,
-        nonce,
-    )
-    .map_err(|_| BlockDecodeError::InvalidTransaction)
+    Transaction::new(version, network, chain_id, sender, recipient, asset_id, amount, nonce)
+        .map_err(|_| BlockDecodeError::InvalidTransaction)
 }
 
 /// Reads fixed-size values safely from a byte slice.
