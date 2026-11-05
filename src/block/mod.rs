@@ -3,10 +3,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::account::network::NetworkId;
-use crate::transaction::
-{ChainId, Transaction,
-signing::TransactionSignature}
-;
+use crate::transaction::{ChainId, Transaction, signing::TransactionSignature};
 
 /// Domain separator for NOVARA block hashing version 1.
 const BLOCK_DOMAIN: &[u8] = b"NOVARA_BLOCK_V1";
