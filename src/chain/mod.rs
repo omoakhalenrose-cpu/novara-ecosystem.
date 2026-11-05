@@ -108,12 +108,9 @@ impl Chain {
     /// execute against a cloned state. The chain and application state are
     /// updated only if every transaction executes successfully.
     pub fn apply_block(&mut self, block: Block) -> Result<(), ChainError> {
-        let expected_height =
-            self.height()
-                .checked_add(1)
-                .ok_or(ChainError::InvalidBlock(
-                    BlockValidationError::WrongHeight,
-                ))?;
+                let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let expected_previous_hash = self.latest_hash();
 
