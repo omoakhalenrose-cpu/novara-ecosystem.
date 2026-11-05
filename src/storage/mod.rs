@@ -8,10 +8,12 @@ use rusqlite::{Connection, OptionalExtension, Result as SqliteResult};
 use crate::account::network::NetworkId;
 use crate::block::{Block, BlockDecodeError, BlockHash};
 use crate::genesis::{GenesisHash, InitializedGenesis};
-use crate::transaction::ChainId;
 
 /// Current NOVARA storage schema version.
 const SCHEMA_VERSION: i64 = 1;
+
+/// SQLite row representation of persisted chain metadata.
+type StoredChainMetadataRow = (i64, Vec<u8>, Vec<u8>, i64, Vec<u8>);
 
 /// Errors returned by NOVARA storage operations.
 #[derive(Debug)]
@@ -167,7 +169,7 @@ impl Storage {
 
     /// Loads the persisted chain identity and latest chain tip.
     pub fn load_chain_metadata(&self) -> Result<Option<ChainMetadata>, StorageError> {
-        let stored: Option<(i64, Vec<u8>, Vec<u8>, i64, Vec<u8>)> = self
+        let stored: Option<StoredChainMetadataRow> = self
             .connection
             .query_row(
                 "
@@ -223,7 +225,7 @@ impl Storage {
 
         let transaction = self.connection.transaction()?;
 
-        let metadata: (i64, Vec<u8>, Vec<u8>, i64, Vec<u8>) = transaction
+        let metadata: StoredChainMetadataRow = transaction
             .query_row(
                 "
                 SELECT network_id, chain_id, genesis_hash, height, latest_block_hash
