@@ -3,6 +3,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::account::network::NetworkId;
+use crate::genesis::GenesisHash;
 use crate::transaction::{ChainId, Transaction, signing::TransactionSignature};
 
 pub mod validation;
@@ -38,6 +39,7 @@ pub struct SignedTransaction {
 pub struct BlockHeader {
     pub network: NetworkId,
     pub chain_id: ChainId,
+    pub genesis_hash: GenesisHash,
     pub height: u64,
     pub timestamp: u64,
     pub previous_hash: BlockHash,
@@ -55,6 +57,7 @@ impl Block {
     pub fn new(
         network: NetworkId,
         chain_id: ChainId,
+        genesis_hash: GenesisHash,
         height: u64,
         timestamp: u64,
         previous_hash: BlockHash,
@@ -64,6 +67,7 @@ impl Block {
             header: BlockHeader {
                 network,
                 chain_id,
+                genesis_hash,
                 height,
                 timestamp,
                 previous_hash,
@@ -81,6 +85,7 @@ impl Block {
         hasher.update(BLOCK_DOMAIN);
         hasher.update([self.header.network.as_byte()]);
         hasher.update(self.header.chain_id.as_bytes());
+        hasher.update(self.header.genesis_hash.as_bytes());
         hasher.update(self.header.height.to_be_bytes());
         hasher.update(self.header.timestamp.to_be_bytes());
         hasher.update(self.header.previous_hash.as_bytes());
@@ -103,12 +108,18 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::genesis::GenesisConfig;
+
+    fn test_genesis_hash() -> GenesisHash {
+        GenesisConfig::new(NetworkId::Development, Vec::new()).hash()
+    }
 
     #[test]
     fn block_hash_is_deterministic() {
         let block = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -123,6 +134,7 @@ mod tests {
         let first = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -132,6 +144,7 @@ mod tests {
         let second = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             2,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -146,6 +159,7 @@ mod tests {
         let first = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -155,6 +169,7 @@ mod tests {
         let second = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             1_000,
             BlockHash::new([2u8; 32]),
@@ -169,6 +184,7 @@ mod tests {
         let first = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -178,8 +194,42 @@ mod tests {
         let second = Block::new(
             NetworkId::Development,
             ChainId::new([1u8; 32]),
+            test_genesis_hash(),
             1,
             2_000,
+            BlockHash::new([0u8; 32]),
+            Vec::new(),
+        );
+
+        assert_ne!(first.hash(), second.hash());
+    }
+
+    #[test]
+    fn different_genesis_hashes_produce_different_block_hashes() {
+        let first = Block::new(
+            NetworkId::Development,
+            ChainId::new([1u8; 32]),
+            test_genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            Vec::new(),
+        );
+
+        let second = Block::new(
+            NetworkId::Development,
+            ChainId::new([1u8; 32]),
+            GenesisConfig::new(
+                NetworkId::Development,
+                vec![crate::genesis::GenesisAllocation {
+                    account_id: crate::account::address::AccountId::new([5u8; 32]),
+                    asset_id: crate::transaction::AssetId::new([6u8; 32]),
+                    amount: 100,
+                }],
+            )
+            .hash(),
+            1,
+            1_000,
             BlockHash::new([0u8; 32]),
             Vec::new(),
         );
