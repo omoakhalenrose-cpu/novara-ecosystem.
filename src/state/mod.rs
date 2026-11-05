@@ -63,9 +63,7 @@ impl State {
     }
 
     /// Initializes application state from a validated genesis.
-    pub fn from_genesis(
-        genesis: &InitializedGenesis,
-    ) -> Result<Self, GenesisInitializationError> {
+    pub fn from_genesis(genesis: &InitializedGenesis) -> Result<Self, GenesisInitializationError> {
         let config = genesis.config();
         let mut state = Self::new();
 
