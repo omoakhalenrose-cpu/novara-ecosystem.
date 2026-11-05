@@ -1,12 +1,13 @@
 //! NOVARA persistent storage.
 //!
 //! Provides SQLite database initialization, chain metadata management,
-//! and sequential block persistence.
+//! sequential block persistence, and chain recovery.
 
 use rusqlite::{Connection, OptionalExtension, Result as SqliteResult};
 
 use crate::account::network::NetworkId;
 use crate::block::{Block, BlockDecodeError, BlockHash};
+use crate::chain::{Chain, ChainError};
 use crate::genesis::{GenesisHash, InitializedGenesis};
 
 /// Current NOVARA storage schema version.
@@ -20,6 +21,7 @@ type StoredChainMetadataRow = (i64, Vec<u8>, Vec<u8>, i64, Vec<u8>);
 pub enum StorageError {
     Database(rusqlite::Error),
     BlockDecode(BlockDecodeError),
+    ChainRecovery(ChainError),
     ChainNotInitialized,
     ChainAlreadyInitialized,
     WrongNetwork,
@@ -28,6 +30,8 @@ pub enum StorageError {
     WrongHeight,
     WrongPreviousHash,
     InvalidStoredHash,
+    InvalidStoredChain,
+    MissingStoredBlock,
     HeightOutOfRange,
 }
 
@@ -216,7 +220,86 @@ impl Storage {
         }))
     }
 
-    /// Saves a block only when it extends the persisted chain tip.
+    /// Recovers a chain from persisted metadata and blocks.
+    ///
+    /// The original validated genesis configuration is required to rebuild
+    /// the initial application state. Every stored block is decoded,
+    /// validated, and replayed in ascending height order.
+    pub fn recover_chain(
+        &self,
+        genesis: &InitializedGenesis,
+    ) -> Result<Chain, StorageError> {
+        let metadata = self
+            .load_chain_metadata()?
+            .ok_or(StorageError::ChainNotInitialized)?;
+
+        if metadata.network != genesis.config().network {
+            return Err(StorageError::WrongNetwork);
+        }
+
+        if metadata.chain_id != *genesis.chain_id().as_bytes() {
+            return Err(StorageError::WrongChain);
+        }
+
+        if metadata.genesis_hash != *genesis.genesis_hash().as_bytes() {
+            return Err(StorageError::WrongGenesis);
+        }
+
+        let (block_count, maximum_height): (i64, Option<i64>) = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*), MAX(height) FROM blocks",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+        let stored_block_count =
+            u64::try_from(block_count).map_err(|_| StorageError::InvalidStoredChain)?;
+
+        if stored_block_count != metadata.height {
+            return Err(StorageError::InvalidStoredChain);
+        }
+
+        match metadata.height {
+            0 => {
+                if maximum_height.is_some()
+                    || metadata.latest_block_hash != metadata.genesis_hash
+                {
+                    return Err(StorageError::InvalidStoredChain);
+                }
+            }
+            height => {
+                if maximum_height
+                    != Some(i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?)
+                {
+                    return Err(StorageError::InvalidStoredChain);
+                }
+            }
+        }
+
+        let mut chain = Chain::new(genesis).map_err(StorageError::ChainRecovery)?;
+
+        for height in 1..=metadata.height {
+            let block = self
+                .load_block(height, genesis.genesis_hash())?
+                .ok_or(StorageError::MissingStoredBlock)?;
+
+            chain
+                .apply_block(block)
+                .map_err(StorageError::ChainRecovery)?;
+        }
+
+        if chain.height() != metadata.height {
+            return Err(StorageError::InvalidStoredChain);
+        }
+
+        if chain.latest_hash().as_bytes() != &metadata.latest_block_hash {
+            return Err(StorageError::InvalidStoredChain);
+        }
+
+        Ok(chain)
+            }
+            /// Saves a block only when it extends the persisted chain tip.
     ///
     /// Block insertion and chain metadata updates happen atomically.
     pub fn save_block(&mut self, block: &Block) -> Result<(), StorageError> {
@@ -375,23 +458,79 @@ fn decode_hash_bytes(bytes: Vec<u8>) -> Result<[u8; 32], StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::network::NetworkId;
-    use crate::block::BlockHash;
-    use crate::genesis::{GenesisConfig, InitializedGenesis};
+    use crate::account::address::AccountId;
+    use crate::crypto::ed25519::Ed25519Identity;
+    use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
+    use crate::transaction::signing::sign_transaction;
+    use crate::transaction::{AssetId, Transaction};
 
-    fn test_genesis() -> InitializedGenesis {
-        InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
+    fn test_genesis() -> (InitializedGenesis, Ed25519Identity, AccountId) {
+        let identity = Ed25519Identity::generate();
+
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
+
+        let recipient = AccountId::new([8u8; 32]);
+        let asset_id = AssetId::new([4u8; 32]);
+
+        let genesis = InitializedGenesis::new(GenesisConfig::new(
+            NetworkId::Development,
+            vec![
+                GenesisAllocation {
+                    account_id: sender,
+                    asset_id,
+                    amount: 1_000,
+                },
+                GenesisAllocation {
+                    account_id: recipient,
+                    asset_id,
+                    amount: 1,
+                },
+            ],
+        ))
+        .unwrap();
+
+        (genesis, identity, recipient)
     }
 
-    fn test_block(genesis: &InitializedGenesis, height: u64, previous_hash: BlockHash) -> Block {
+    fn test_block(
+        genesis: &InitializedGenesis,
+        identity: &Ed25519Identity,
+        recipient: AccountId,
+        height: u64,
+        previous_hash: BlockHash,
+        amount: u128,
+    ) -> Block {
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
+
+        let transaction = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            AssetId::new([4u8; 32]),
+            amount,
+            height - 1,
+        )
+        .unwrap();
+
+        let signature = sign_transaction(&transaction, identity);
+
         Block::new(
             NetworkId::Development,
             genesis.chain_id(),
             genesis.genesis_hash(),
             height,
-            1_000,
+            1_000 + height,
             previous_hash,
-            Vec::new(),
+            vec![crate::block::SignedTransaction {
+                transaction,
+                signature,
+            }],
         )
     }
 
@@ -435,7 +574,7 @@ mod tests {
     #[test]
     fn initializes_and_loads_chain_metadata() {
         let storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, _, _) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
@@ -454,7 +593,7 @@ mod tests {
     #[test]
     fn rejects_chain_reinitialization() {
         let storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, _, _) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
@@ -467,12 +606,12 @@ mod tests {
     #[test]
     fn saves_block_and_updates_chain_metadata() {
         let mut storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
         let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
-        let block = test_block(&genesis, 1, previous_hash);
+        let block = test_block(&genesis, &identity, recipient, 1, previous_hash, 100);
         let expected_hash = block.hash();
 
         storage.save_block(&block).unwrap();
@@ -486,12 +625,12 @@ mod tests {
     #[test]
     fn saves_and_loads_block() {
         let mut storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
         let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
-        let block = test_block(&genesis, 1, previous_hash);
+        let block = test_block(&genesis, &identity, recipient, 1, previous_hash, 100);
 
         storage.save_block(&block).unwrap();
 
@@ -506,12 +645,12 @@ mod tests {
     #[test]
     fn loaded_block_preserves_original_hash() {
         let mut storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
         let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
-        let block = test_block(&genesis, 1, previous_hash);
+        let block = test_block(&genesis, &identity, recipient, 1, previous_hash, 100);
         let original_hash = block.hash();
 
         storage.save_block(&block).unwrap();
@@ -527,12 +666,12 @@ mod tests {
     #[test]
     fn rejects_block_with_wrong_height() {
         let mut storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
         let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
-        let block = test_block(&genesis, 2, previous_hash);
+        let block = test_block(&genesis, &identity, recipient, 2, previous_hash, 100);
 
         assert!(matches!(
             storage.save_block(&block),
@@ -543,11 +682,18 @@ mod tests {
     #[test]
     fn rejects_block_with_wrong_previous_hash() {
         let mut storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
 
         storage.initialize_chain(&genesis).unwrap();
 
-        let block = test_block(&genesis, 1, BlockHash::new([9u8; 32]));
+        let block = test_block(
+            &genesis,
+            &identity,
+            recipient,
+            1,
+            BlockHash::new([9u8; 32]),
+            100,
+        );
 
         assert!(matches!(
             storage.save_block(&block),
@@ -556,12 +702,88 @@ mod tests {
     }
 
     #[test]
+    fn recovers_empty_chain() {
+        let storage = Storage::open_in_memory().unwrap();
+        let (genesis, _, _) = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let recovered = storage.recover_chain(&genesis).unwrap();
+
+        assert_eq!(recovered.height(), 0);
+        assert_eq!(
+            recovered.latest_hash().as_bytes(),
+            genesis.genesis_hash().as_bytes()
+        );
+    }
+
+    #[test]
+    fn recovers_chain_with_persisted_block() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let (genesis, identity, recipient) = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+        let block = test_block(&genesis, &identity, recipient, 1, previous_hash, 100);
+        let expected_hash = block.hash();
+
+        storage.save_block(&block).unwrap();
+
+        let recovered = storage.recover_chain(&genesis).unwrap();
+
+        assert_eq!(recovered.height(), 1);
+        assert_eq!(recovered.block_count(), 1);
+        assert_eq!(recovered.latest_hash(), expected_hash);
+    }
+
+    #[test]
+    fn rejects_recovery_with_wrong_genesis() {
+        let storage = Storage::open_in_memory().unwrap();
+        let (genesis, _, _) = test_genesis();
+        let (different_genesis, _, _) = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        assert!(matches!(
+            storage.recover_chain(&different_genesis),
+            Err(StorageError::WrongChain) | Err(StorageError::WrongGenesis)
+        ));
+    }
+
+    #[test]
+    fn rejects_recovery_when_stored_block_is_missing() {
+        let storage = Storage::open_in_memory().unwrap();
+        let (genesis, _, _) = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        storage
+            .connection()
+            .execute(
+                "
+                UPDATE chain_metadata
+                SET height = 1, latest_block_hash = genesis_hash
+                WHERE id = 1
+                ",
+                [],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            storage.recover_chain(&genesis),
+            Err(StorageError::InvalidStoredChain)
+        ));
+    }
+
+    #[test]
     fn returns_none_for_missing_block() {
         let storage = Storage::open_in_memory().unwrap();
-        let genesis = test_genesis();
+        let (genesis, _, _) = test_genesis();
 
         let loaded = storage.load_block(1, genesis.genesis_hash()).unwrap();
 
         assert!(loaded.is_none());
     }
+    
 }
