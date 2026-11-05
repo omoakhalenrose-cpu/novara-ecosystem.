@@ -161,8 +161,6 @@ mod tests {
     #[test]
     fn wrong_genesis_is_rejected() {
         let (block, mut context) = setup();
-        context.genesis_hash = GenesisConfig::new(NetworkId::Development, Vec::new())
-            .hash();
 
         context.genesis_hash = GenesisConfig::new(
             NetworkId::Development,
@@ -215,4 +213,4 @@ mod tests {
             ))
         );
     }
-}
+                                                   }
