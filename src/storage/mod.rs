@@ -1,11 +1,14 @@
 //! NOVARA persistent storage.
 //!
-//! Provides SQLite database initialization and block persistence.
+//! Provides SQLite database initialization, chain metadata management,
+//! and sequential block persistence.
 
 use rusqlite::{Connection, OptionalExtension, Result as SqliteResult};
 
+use crate::account::network::NetworkId;
 use crate::block::{Block, BlockDecodeError, BlockHash};
-use crate::genesis::GenesisHash;
+use crate::genesis::{GenesisHash, InitializedGenesis};
+use crate::transaction::ChainId;
 
 /// Current NOVARA storage schema version.
 const SCHEMA_VERSION: i64 = 1;
@@ -15,8 +18,25 @@ const SCHEMA_VERSION: i64 = 1;
 pub enum StorageError {
     Database(rusqlite::Error),
     BlockDecode(BlockDecodeError),
+    ChainNotInitialized,
+    ChainAlreadyInitialized,
+    WrongNetwork,
+    WrongChain,
+    WrongGenesis,
+    WrongHeight,
+    WrongPreviousHash,
     InvalidStoredHash,
     HeightOutOfRange,
+}
+
+/// Persisted identity and tip information for a NOVARA chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainMetadata {
+    pub network: NetworkId,
+    pub chain_id: [u8; 32],
+    pub genesis_hash: [u8; 32],
+    pub height: u64,
+    pub latest_block_hash: [u8; 32],
 }
 
 impl From<rusqlite::Error> for StorageError {
@@ -31,7 +51,7 @@ impl From<BlockDecodeError> for StorageError {
     }
 }
 
-/// Opens or creates the NOVARA database and manages persistent blocks.
+/// Opens or creates the NOVARA database and manages persistent chain data.
 pub struct Storage {
     connection: Connection,
 }
@@ -107,17 +127,171 @@ impl Storage {
         Ok(())
     }
 
-    /// Saves a complete block to SQLite.
+    /// Initializes chain metadata from validated genesis.
     ///
-    /// Existing block heights cannot be overwritten.
-    pub fn save_block(&self, block: &Block) -> Result<(), StorageError> {
+    /// The genesis hash is the initial chain-tip hash at height zero.
+    /// Reinitialization is rejected.
+    pub fn initialize_chain(
+        &self,
+        genesis: &InitializedGenesis,
+    ) -> Result<(), StorageError> {
+        let existing: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT id FROM chain_metadata WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if existing.is_some() {
+            return Err(StorageError::ChainAlreadyInitialized);
+        }
+
+        self.connection.execute(
+            "
+            INSERT INTO chain_metadata (
+                id,
+                network_id,
+                chain_id,
+                genesis_hash,
+                height,
+                latest_block_hash
+            )
+            VALUES (1, ?1, ?2, ?3, 0, ?3)
+            ",
+            rusqlite::params![
+                genesis.config().network.as_byte() as i64,
+                genesis.chain_id().as_bytes().as_slice(),
+                genesis.genesis_hash().as_bytes().as_slice(),
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Loads the persisted chain identity and latest chain tip.
+    pub fn load_chain_metadata(&self) -> Result<Option<ChainMetadata>, StorageError> {
+        let stored: Option<(i64, Vec<u8>, Vec<u8>, i64, Vec<u8>)> = self
+            .connection
+            .query_row(
+                "
+                SELECT network_id, chain_id, genesis_hash, height, latest_block_hash
+                FROM chain_metadata
+                WHERE id = 1
+                ",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        let Some((network_id, chain_id, genesis_hash, height, latest_block_hash)) = stored
+        else {
+            return Ok(None);
+        };
+
+        let network = match network_id {
+            0x01 => NetworkId::Development,
+            0x02 => NetworkId::Testnet,
+            0x03 => NetworkId::Mainnet,
+            _ => return Err(StorageError::WrongNetwork),
+        };
+
+        let chain_id = decode_hash_bytes(chain_id)?;
+        let genesis_hash = decode_hash_bytes(genesis_hash)?;
+        let latest_block_hash = decode_hash_bytes(latest_block_hash)?;
+
+        let height = u64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
+
+        Ok(Some(ChainMetadata {
+            network,
+            chain_id,
+            genesis_hash,
+            height,
+            latest_block_hash,
+        }))
+    }
+
+    /// Saves a block only when it extends the persisted chain tip.
+    ///
+    /// Block insertion and chain metadata updates happen atomically.
+    pub fn save_block(&mut self, block: &Block) -> Result<(), StorageError> {
         let height =
             i64::try_from(block.header.height).map_err(|_| StorageError::HeightOutOfRange)?;
+
+        let transaction = self.connection.transaction()?;
+
+        let metadata: (i64, Vec<u8>, Vec<u8>, i64, Vec<u8>) = transaction
+            .query_row(
+                "
+                SELECT network_id, chain_id, genesis_hash, height, latest_block_hash
+                FROM chain_metadata
+                WHERE id = 1
+                ",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StorageError::ChainNotInitialized)?;
+
+        let expected_network = match metadata.0 {
+            0x01 => NetworkId::Development,
+            0x02 => NetworkId::Testnet,
+            0x03 => NetworkId::Mainnet,
+            _ => return Err(StorageError::WrongNetwork),
+        };
+
+        if block.header.network != expected_network {
+            return Err(StorageError::WrongNetwork);
+        }
+
+        let expected_chain_id = decode_hash_bytes(metadata.1)?;
+        if block.header.chain_id.as_bytes() != &expected_chain_id {
+            return Err(StorageError::WrongChain);
+        }
+
+        let expected_genesis_hash = decode_hash_bytes(metadata.2)?;
+        if block.header.genesis_hash.as_bytes() != &expected_genesis_hash {
+            return Err(StorageError::WrongGenesis);
+        }
+
+        let previous_height =
+            u64::try_from(metadata.3).map_err(|_| StorageError::HeightOutOfRange)?;
+
+        let expected_height = previous_height
+            .checked_add(1)
+            .ok_or(StorageError::HeightOutOfRange)?;
+
+        if block.header.height != expected_height || height <= 0 {
+            return Err(StorageError::WrongHeight);
+        }
+
+        let latest_hash = decode_hash_bytes(metadata.4)?;
+
+        if block.header.previous_hash.as_bytes() != &latest_hash {
+            return Err(StorageError::WrongPreviousHash);
+        }
 
         let block_hash = block.hash();
         let encoded_block = block.encode();
 
-        self.connection.execute(
+        transaction.execute(
             "
             INSERT INTO blocks (
                 height,
@@ -135,16 +309,28 @@ impl Storage {
             ],
         )?;
 
+        transaction.execute(
+            "
+            UPDATE chain_metadata
+            SET height = ?1, latest_block_hash = ?2
+            WHERE id = 1
+            ",
+            rusqlite::params![height, block_hash.as_bytes().as_slice()],
+        )?;
+
+        transaction.commit()?;
+
         Ok(())
     }
 
-    /// Loads a block by height and verifies its stored hash.
+    /// Loads a block by height and verifies its stored hashes.
     pub fn load_block(
         &self,
         height: u64,
         expected_genesis_hash: GenesisHash,
     ) -> Result<Option<Block>, StorageError> {
-        let database_height = i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
+        let database_height =
+            i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
 
         let stored: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = self
             .connection
@@ -163,13 +349,8 @@ impl Storage {
             return Ok(None);
         };
 
-        let stored_hash: [u8; 32] = stored_hash
-            .try_into()
-            .map_err(|_| StorageError::InvalidStoredHash)?;
-
-        let stored_previous_hash: [u8; 32] = stored_previous_hash
-            .try_into()
-            .map_err(|_| StorageError::InvalidStoredHash)?;
+        let stored_hash = decode_hash_bytes(stored_hash)?;
+        let stored_previous_hash = decode_hash_bytes(stored_previous_hash)?;
 
         let block = Block::decode(&block_data, expected_genesis_hash)?;
 
@@ -189,6 +370,13 @@ impl Storage {
     }
 }
 
+/// Converts a SQLite BLOB into a fixed-size 32-byte value.
+fn decode_hash_bytes(bytes: Vec<u8>) -> Result<[u8; 32], StorageError> {
+    bytes
+        .try_into()
+        .map_err(|_| StorageError::InvalidStoredHash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,14 +388,14 @@ mod tests {
         InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
     }
 
-    fn test_block(genesis: &InitializedGenesis) -> Block {
+    fn test_block(genesis: &InitializedGenesis, height: u64, previous_hash: BlockHash) -> Block {
         Block::new(
             NetworkId::Development,
             genesis.chain_id(),
             genesis.genesis_hash(),
-            1,
+            height,
             1_000,
-            BlockHash::new([0u8; 32]),
+            previous_hash,
             Vec::new(),
         )
     }
@@ -250,10 +438,65 @@ mod tests {
     }
 
     #[test]
-    fn saves_and_loads_block() {
+    fn initializes_and_loads_chain_metadata() {
         let storage = Storage::open_in_memory().unwrap();
         let genesis = test_genesis();
-        let block = test_block(&genesis);
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let metadata = storage.load_chain_metadata().unwrap().unwrap();
+
+        assert_eq!(metadata.network, NetworkId::Development);
+        assert_eq!(metadata.chain_id, *genesis.chain_id().as_bytes());
+        assert_eq!(metadata.genesis_hash, *genesis.genesis_hash().as_bytes());
+        assert_eq!(metadata.height, 0);
+        assert_eq!(
+            metadata.latest_block_hash,
+            *genesis.genesis_hash().as_bytes()
+        );
+    }
+
+    #[test]
+    fn rejects_chain_reinitialization() {
+        let storage = Storage::open_in_memory().unwrap();
+        let genesis = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        assert!(matches!(
+            storage.initialize_chain(&genesis),
+            Err(StorageError::ChainAlreadyInitialized)
+        ));
+    }
+
+    #[test]
+    fn saves_block_and_updates_chain_metadata() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let genesis = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+        let block = test_block(&genesis, 1, previous_hash);
+        let expected_hash = block.hash();
+
+        storage.save_block(&block).unwrap();
+
+        let metadata = storage.load_chain_metadata().unwrap().unwrap();
+
+        assert_eq!(metadata.height, 1);
+        assert_eq!(metadata.latest_block_hash, *expected_hash.as_bytes());
+    }
+
+    #[test]
+    fn saves_and_loads_block() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let genesis = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+        let block = test_block(&genesis, 1, previous_hash);
 
         storage.save_block(&block).unwrap();
 
@@ -267,10 +510,13 @@ mod tests {
 
     #[test]
     fn loaded_block_preserves_original_hash() {
-        let storage = Storage::open_in_memory().unwrap();
+        let mut storage = Storage::open_in_memory().unwrap();
         let genesis = test_genesis();
-        let block = test_block(&genesis);
 
+        storage.initialize_chain(&genesis).unwrap();
+
+        let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+        let block = test_block(&genesis, 1, previous_hash);
         let original_hash = block.hash();
 
         storage.save_block(&block).unwrap();
@@ -281,6 +527,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(loaded.hash(), original_hash);
+    }
+
+    #[test]
+    fn rejects_block_with_wrong_height() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let genesis = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+        let block = test_block(&genesis, 2, previous_hash);
+
+        assert!(matches!(
+            storage.save_block(&block),
+            Err(StorageError::WrongHeight)
+        ));
+    }
+
+    #[test]
+    fn rejects_block_with_wrong_previous_hash() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let genesis = test_genesis();
+
+        storage.initialize_chain(&genesis).unwrap();
+
+        let block = test_block(&genesis, 1, BlockHash::new([9u8; 32]));
+
+        assert!(matches!(
+            storage.save_block(&block),
+            Err(StorageError::WrongPreviousHash)
+        ));
     }
 
     #[test]
