@@ -3,6 +3,7 @@
 //! This library contains NOVARA's core protocol components.
 
 pub mod account;
+pub mod block;
 pub mod crypto;
 pub mod genesis;
 pub mod state;
