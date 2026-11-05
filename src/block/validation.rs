@@ -206,11 +206,11 @@ mod tests {
 
         block.transactions[0].transaction.amount = 200;
 
-        assert_eq!(
+                assert_eq!(
             validate_block(&block, &context),
             Err(BlockValidationError::InvalidTransaction(
                 ValidationError::InvalidSignature
             ))
         );
+    }
 }
-                                                   }
