@@ -1,7 +1,6 @@
 //! NOVARA block validation.
 
 use crate::account::network::NetworkId;
-use crate::genesis::{GenesisConfig, InitializedGenesis};
 use crate::transaction::validation::{ValidationContext, ValidationError, validate_transaction};
 
 use super::{Block, BlockHash};
@@ -74,6 +73,7 @@ mod tests {
     use super::*;
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
+    use crate::genesis::{GenesisConfig, InitializedGenesis};
     use crate::transaction::signing::sign_transaction;
     use crate::transaction::{AssetId, ChainId, Transaction};
 
