@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::account::address::AccountId;
-use crate::genesis::{GenesisConfig, GenesisError};
+use crate::genesis::InitializedGenesis;
 use crate::transaction::AssetId;
 
 pub mod execution;
@@ -47,7 +47,6 @@ pub enum StateError {
 /// Errors returned during genesis state initialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenesisInitializationError {
-    InvalidConfiguration(GenesisError),
     BalanceOverflow,
 }
 
@@ -63,12 +62,11 @@ impl State {
         Self::default()
     }
 
-    /// Initializes application state from a validated genesis configuration.
-    pub fn from_genesis(config: &GenesisConfig) -> Result<Self, GenesisInitializationError> {
-        config
-            .validate()
-            .map_err(GenesisInitializationError::InvalidConfiguration)?;
-
+    /// Initializes application state from a validated genesis.
+    pub fn from_genesis(
+        genesis: &InitializedGenesis,
+    ) -> Result<Self, GenesisInitializationError> {
+        let config = genesis.config();
         let mut state = Self::new();
 
         for allocation in &config.allocations {
@@ -144,7 +142,7 @@ impl State {
 mod tests {
     use super::*;
     use crate::account::network::NetworkId;
-    use crate::genesis::GenesisAllocation;
+    use crate::genesis::{GenesisAllocation, GenesisConfig};
 
     fn sample_account(value: u8) -> AccountId {
         AccountId::new([value; 32])
@@ -160,6 +158,10 @@ mod tests {
             asset_id,
             amount,
         }
+    }
+
+    fn initialize_genesis(config: GenesisConfig) -> InitializedGenesis {
+        InitializedGenesis::new(config).unwrap()
     }
 
     #[test]
@@ -230,7 +232,8 @@ mod tests {
             vec![sample_allocation(account, asset, 1_000)],
         );
 
-        let state = State::from_genesis(&config).unwrap();
+        let genesis = initialize_genesis(config);
+        let state = State::from_genesis(&genesis).unwrap();
 
         assert_eq!(state.account_count(), 1);
         assert_eq!(state.balance_of(&account, &asset), Ok(1_000));
@@ -251,7 +254,8 @@ mod tests {
             ],
         );
 
-        let state = State::from_genesis(&config).unwrap();
+        let genesis = initialize_genesis(config);
+        let state = State::from_genesis(&genesis).unwrap();
 
         assert_eq!(state.account_count(), 1);
         assert_eq!(state.balance_of(&account, &first_asset), Ok(500));
@@ -272,7 +276,8 @@ mod tests {
             ],
         );
 
-        let state = State::from_genesis(&config).unwrap();
+        let genesis = initialize_genesis(config);
+        let state = State::from_genesis(&genesis).unwrap();
 
         assert_eq!(state.account_count(), 2);
         assert_eq!(state.balance_of(&first_account, &asset), Ok(1_000));
@@ -280,41 +285,20 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_genesis_allocation_is_rejected() {
+    fn initialized_genesis_preserves_account_balances() {
         let account = sample_account(1);
         let asset = AssetId::new([5u8; 32]);
 
         let config = GenesisConfig::new(
             NetworkId::Development,
-            vec![
-                sample_allocation(account, asset, 1_000),
-                sample_allocation(account, asset, 2_000),
-            ],
+            vec![sample_allocation(account, asset, 1_000)],
         );
 
-        assert_eq!(
-            State::from_genesis(&config),
-            Err(GenesisInitializationError::InvalidConfiguration(
-                GenesisError::DuplicateAllocation
-            ))
-        );
-    }
+        let genesis = initialize_genesis(config);
 
-    #[test]
-    fn invalid_genesis_is_rejected() {
-        let account = sample_account(1);
-        let asset = AssetId::new([5u8; 32]);
+        let state = State::from_genesis(&genesis).unwrap();
 
-        let config = GenesisConfig::new(
-            NetworkId::Development,
-            vec![sample_allocation(account, asset, 0)],
-        );
-
-        assert_eq!(
-            State::from_genesis(&config),
-            Err(GenesisInitializationError::InvalidConfiguration(
-                GenesisError::ZeroAllocation
-            ))
-        );
+        assert!(state.account_exists(&account));
+        assert_eq!(state.balance_of(&account, &asset), Ok(1_000));
     }
 }
