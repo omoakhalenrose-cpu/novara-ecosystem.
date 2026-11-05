@@ -84,9 +84,7 @@ impl GenesisConfig {
     /// Allocations are sorted so their input order does not
     /// change the resulting genesis identity.
     pub fn encode(&self) -> Vec<u8> {
-        let mut allocations: Vec<&GenesisAllocation> =
-            self.allocations.iter().collect();
-
+        let mut allocations: Vec<&GenesisAllocation> = self.allocations.iter().collect();
         allocations.sort_by_key(|allocation| {
             (
                 *allocation.account_id.as_bytes(),
