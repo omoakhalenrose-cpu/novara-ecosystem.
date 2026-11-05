@@ -111,8 +111,8 @@ impl Storage {
     ///
     /// Existing block heights cannot be overwritten.
     pub fn save_block(&self, block: &Block) -> Result<(), StorageError> {
-        let height = i64::try_from(block.header.height)
-            .map_err(|_| StorageError::HeightOutOfRange)?;
+        let height =
+            i64::try_from(block.header.height).map_err(|_| StorageError::HeightOutOfRange)?;
 
         let block_hash = block.hash();
         let encoded_block = block.encode();
@@ -144,8 +144,7 @@ impl Storage {
         height: u64,
         expected_genesis_hash: GenesisHash,
     ) -> Result<Option<Block>, StorageError> {
-        let database_height =
-            i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
+        let database_height = i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
 
         let stored: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = self
             .connection
@@ -289,9 +288,7 @@ mod tests {
         let storage = Storage::open_in_memory().unwrap();
         let genesis = test_genesis();
 
-        let loaded = storage
-            .load_block(1, genesis.genesis_hash())
-            .unwrap();
+        let loaded = storage.load_block(1, genesis.genesis_hash()).unwrap();
 
         assert!(loaded.is_none());
     }
