@@ -108,18 +108,19 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genesis::GenesisConfig;
+    use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
 
-    fn test_genesis_hash() -> GenesisHash {
-        GenesisConfig::new(NetworkId::Development, Vec::new()).hash()
+    fn test_genesis() -> InitializedGenesis {
+        InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
     }
 
     #[test]
     fn block_hash_is_deterministic() {
+        let genesis = test_genesis();
         let block = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -131,10 +132,12 @@ mod tests {
 
     #[test]
     fn different_block_heights_produce_different_hashes() {
+        let genesis = test_genesis();
+
         let first = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -143,8 +146,8 @@ mod tests {
 
         let second = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             2,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -156,10 +159,12 @@ mod tests {
 
     #[test]
     fn different_previous_hashes_produce_different_block_hashes() {
+        let genesis = test_genesis();
+
         let first = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -168,8 +173,8 @@ mod tests {
 
         let second = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([2u8; 32]),
@@ -181,10 +186,12 @@ mod tests {
 
     #[test]
     fn different_timestamps_produce_different_hashes() {
+        let genesis = test_genesis();
+
         let first = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -193,8 +200,8 @@ mod tests {
 
         let second = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             2_000,
             BlockHash::new([0u8; 32]),
@@ -206,10 +213,22 @@ mod tests {
 
     #[test]
     fn different_genesis_hashes_produce_different_block_hashes() {
+        let genesis = test_genesis();
+
+        let different_genesis = InitializedGenesis::new(GenesisConfig::new(
+            NetworkId::Development,
+            vec![GenesisAllocation {
+                account_id: crate::account::address::AccountId::new([5u8; 32]),
+                asset_id: crate::transaction::AssetId::new([6u8; 32]),
+                amount: 100,
+            }],
+        ))
+        .unwrap();
+
         let first = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            test_genesis_hash(),
+            genesis.chain_id(),
+            genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
@@ -218,16 +237,8 @@ mod tests {
 
         let second = Block::new(
             NetworkId::Development,
-            ChainId::new([1u8; 32]),
-            GenesisConfig::new(
-                NetworkId::Development,
-                vec![crate::genesis::GenesisAllocation {
-                    account_id: crate::account::address::AccountId::new([5u8; 32]),
-                    asset_id: crate::transaction::AssetId::new([6u8; 32]),
-                    amount: 100,
-                }],
-            )
-            .hash(),
+            different_genesis.chain_id(),
+            different_genesis.genesis_hash(),
             1,
             1_000,
             BlockHash::new([0u8; 32]),
