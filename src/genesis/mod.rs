@@ -85,6 +85,7 @@ impl GenesisConfig {
     /// change the resulting genesis identity.
     pub fn encode(&self) -> Vec<u8> {
         let mut allocations: Vec<&GenesisAllocation> = self.allocations.iter().collect();
+
         allocations.sort_by_key(|allocation| {
             (
                 *allocation.account_id.as_bytes(),
@@ -122,5 +123,52 @@ impl GenesisConfig {
         let digest = Sha256::digest(self.encode());
 
         GenesisHash(digest.into())
+    }
+}
+
+/// A validated genesis configuration with authoritative chain identities.
+///
+/// The private fields ensure the Chain ID and Genesis Hash
+/// cannot be independently replaced after initialization.
+#[derive(Debug, Clone)]
+pub struct InitializedGenesis {
+    config: GenesisConfig,
+    chain_id: ChainId,
+    genesis_hash: GenesisHash,
+}
+
+impl InitializedGenesis {
+    /// Validates and initializes a genesis configuration.
+    pub fn new(config: GenesisConfig) -> Result<Self, GenesisError> {
+        config.validate()?;
+
+        let chain_id = config.chain_id();
+        let genesis_hash = config.hash();
+
+        Ok(Self {
+            config,
+            chain_id,
+            genesis_hash,
+        })
+    }
+
+    /// Returns the validated genesis configuration.
+    pub const fn config(&self) -> &GenesisConfig {
+        &self.config
+    }
+
+    /// Returns the authoritative Chain ID.
+    pub const fn chain_id(&self) -> ChainId {
+        self.chain_id
+    }
+
+    /// Returns the authoritative Genesis Hash.
+    pub const fn genesis_hash(&self) -> GenesisHash {
+        self.genesis_hash
+    }
+
+    /// Consumes the initialized genesis and returns its configuration.
+    pub fn into_config(self) -> GenesisConfig {
+        self.config
     }
 }
