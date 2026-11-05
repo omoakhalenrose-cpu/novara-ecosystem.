@@ -1,11 +1,7 @@
 //! NOVARA block validation.
 
 use crate::account::network::NetworkId;
-use crate::transaction::validation::{
-    ValidationContext,
-    ValidationError,
-    validate_transaction,
-};
+use crate::transaction::validation::{ValidationContext, ValidationError, validate_transaction};
 
 use super::{Block, BlockHash};
 
