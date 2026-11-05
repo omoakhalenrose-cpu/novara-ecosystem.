@@ -297,9 +297,10 @@ impl Storage {
             return Err(StorageError::InvalidStoredChain);
         }
 
-        Ok(chain)
-            }
-            /// Saves a block only when it extends the persisted chain tip.
+                Ok(chain)
+    }
+
+    /// Saves a block only when it extends the persisted chain tip.
     ///
     /// Block insertion and chain metadata updates happen atomically.
     pub fn save_block(&mut self, block: &Block) -> Result<(), StorageError> {
