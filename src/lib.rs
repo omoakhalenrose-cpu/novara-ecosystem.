@@ -8,6 +8,7 @@ pub mod chain;
 pub mod crypto;
 pub mod genesis;
 pub mod state;
+pub mod storage;
 pub mod transaction;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
