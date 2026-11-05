@@ -212,5 +212,5 @@ mod tests {
                 ValidationError::InvalidSignature
             ))
         );
-    }
+}
                                                    }
