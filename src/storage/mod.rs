@@ -131,17 +131,12 @@ impl Storage {
     ///
     /// The genesis hash is the initial chain-tip hash at height zero.
     /// Reinitialization is rejected.
-    pub fn initialize_chain(
-        &self,
-        genesis: &InitializedGenesis,
-    ) -> Result<(), StorageError> {
+    pub fn initialize_chain(&self, genesis: &InitializedGenesis) -> Result<(), StorageError> {
         let existing: Option<i64> = self
             .connection
-            .query_row(
-                "SELECT id FROM chain_metadata WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT id FROM chain_metadata WHERE id = 1", [], |row| {
+                row.get(0)
+            })
             .optional()?;
 
         if existing.is_some() {
@@ -193,8 +188,7 @@ impl Storage {
             )
             .optional()?;
 
-        let Some((network_id, chain_id, genesis_hash, height, latest_block_hash)) = stored
-        else {
+        let Some((network_id, chain_id, genesis_hash, height, latest_block_hash)) = stored else {
             return Ok(None);
         };
 
@@ -329,8 +323,7 @@ impl Storage {
         height: u64,
         expected_genesis_hash: GenesisHash,
     ) -> Result<Option<Block>, StorageError> {
-        let database_height =
-            i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
+        let database_height = i64::try_from(height).map_err(|_| StorageError::HeightOutOfRange)?;
 
         let stored: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = self
             .connection
