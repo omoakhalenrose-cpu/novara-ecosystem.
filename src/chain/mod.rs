@@ -4,15 +4,13 @@
 //! Blocks are accepted only after validation and successful execution.
 
 use crate::account::network::NetworkId;
-use crate::block::validation::{
-    BlockValidationContext, BlockValidationError, validate_block,
-};
+use crate::block::validation::{BlockValidationContext, BlockValidationError, validate_block};
 use crate::block::{Block, BlockHash};
 use crate::genesis::{GenesisHash, InitializedGenesis};
 use crate::state::execution::ExecutionError;
 use crate::state::{GenesisInitializationError, State};
-use crate::transaction::validation::ValidationContext;
 use crate::transaction::ChainId;
+use crate::transaction::validation::ValidationContext;
 
 /// Errors returned by chain initialization and block application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +35,7 @@ impl Chain {
     ///
     /// Genesis represents height zero. The first accepted block has height one.
     pub fn new(genesis: &InitializedGenesis) -> Result<Self, ChainError> {
-        let state =
-            State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
+        let state = State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
 
         Ok(Self {
             network: genesis.config().network,
