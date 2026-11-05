@@ -1,6 +1,7 @@
 //! NOVARA block validation.
 
 use crate::account::network::NetworkId;
+use crate::genesis::GenesisHash;
 use crate::transaction::validation::{ValidationContext, ValidationError, validate_transaction};
 
 use super::{Block, BlockHash};
@@ -10,6 +11,7 @@ use super::{Block, BlockHash};
 pub struct BlockValidationContext {
     pub network: NetworkId,
     pub chain_id: crate::transaction::ChainId,
+    pub genesis_hash: GenesisHash,
     pub expected_height: u64,
     pub expected_previous_hash: BlockHash,
 }
@@ -19,6 +21,7 @@ pub struct BlockValidationContext {
 pub enum BlockValidationError {
     WrongNetwork,
     WrongChain,
+    WrongGenesis,
     WrongHeight,
     WrongPreviousHash,
     InvalidTransaction(ValidationError),
@@ -35,6 +38,10 @@ pub fn validate_block(
 
     if block.header.chain_id != context.chain_id {
         return Err(BlockValidationError::WrongChain);
+    }
+
+    if block.header.genesis_hash != context.genesis_hash {
+        return Err(BlockValidationError::WrongGenesis);
     }
 
     if block.header.height != context.expected_height {
@@ -67,6 +74,7 @@ mod tests {
     use super::*;
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
+    use crate::genesis::GenesisConfig;
     use crate::transaction::signing::sign_transaction;
     use crate::transaction::{AssetId, ChainId, Transaction};
 
@@ -75,6 +83,7 @@ mod tests {
 
         let network = NetworkId::Development;
         let chain_id = ChainId::new([1u8; 32]);
+        let genesis_hash = GenesisConfig::new(network, Vec::new()).hash();
         let previous_hash = BlockHash::new([2u8; 32]);
 
         let sender =
@@ -102,6 +111,7 @@ mod tests {
         let block = Block::new(
             network,
             chain_id,
+            genesis_hash,
             1,
             1_000,
             previous_hash,
@@ -111,6 +121,7 @@ mod tests {
         let context = BlockValidationContext {
             network,
             chain_id,
+            genesis_hash,
             expected_height: 1,
             expected_previous_hash: previous_hash,
         };
@@ -144,6 +155,28 @@ mod tests {
         assert_eq!(
             validate_block(&block, &context),
             Err(BlockValidationError::WrongChain)
+        );
+    }
+
+    #[test]
+    fn wrong_genesis_is_rejected() {
+        let (block, mut context) = setup();
+        context.genesis_hash = GenesisConfig::new(NetworkId::Development, Vec::new())
+            .hash();
+
+        context.genesis_hash = GenesisConfig::new(
+            NetworkId::Development,
+            vec![crate::genesis::GenesisAllocation {
+                account_id: AccountId::new([5u8; 32]),
+                asset_id: AssetId::new([6u8; 32]),
+                amount: 100,
+            }],
+        )
+        .hash();
+
+        assert_eq!(
+            validate_block(&block, &context),
+            Err(BlockValidationError::WrongGenesis)
         );
     }
 
