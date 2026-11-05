@@ -108,12 +108,12 @@ impl Chain {
     /// execute against a cloned state. The chain and application state are
     /// updated only if every transaction executes successfully.
     pub fn apply_block(&mut self, block: Block) -> Result<(), ChainError> {
-        let expected_height = self
-            .height()
-            .checked_add(1)
-            .ok_or(ChainError::InvalidBlock(
-                BlockValidationError::WrongHeight,
-            ))?;
+        let expected_height =
+            self.height()
+                .checked_add(1)
+                .ok_or(ChainError::InvalidBlock(
+                    BlockValidationError::WrongHeight,
+                ))?;
 
         let expected_previous_hash = self.latest_hash();
 
@@ -160,27 +160,7 @@ mod tests {
     use crate::transaction::signing::sign_transaction;
     use crate::transaction::{AssetId, Transaction};
 
-    fn test_genesis() -> InitializedGenesis {
-        let identity = Ed25519Identity::generate();
-
-        let account_id = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
-
-        InitializedGenesis::new(GenesisConfig::new(
-            NetworkId::Development,
-            vec![GenesisAllocation {
-                account_id,
-                asset_id: AssetId::new([4u8; 32]),
-                amount: 1_000,
-            }],
-        ))
-        .unwrap()
-    }
-
-    fn create_valid_block(chain: &Chain, genesis: &InitializedGenesis) -> Block {
+    fn test_genesis() -> (InitializedGenesis, Ed25519Identity, AccountId) {
         let identity = Ed25519Identity::generate();
 
         let sender = AccountId::try_from_ed25519_public_key(
@@ -192,9 +172,38 @@ mod tests {
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
 
-        let mut state = chain.state.clone();
-        state.create_account(sender).unwrap();
-        state.create_account(recipient).unwrap();
+        let genesis = InitializedGenesis::new(GenesisConfig::new(
+            NetworkId::Development,
+            vec![
+                GenesisAllocation {
+                    account_id: sender,
+                    asset_id,
+                    amount: 1_000,
+                },
+                GenesisAllocation {
+                    account_id: recipient,
+                    asset_id,
+                    amount: 1,
+                },
+            ],
+        ))
+        .unwrap();
+
+        (genesis, identity, recipient)
+    }
+
+    fn create_valid_block(
+        chain: &Chain,
+        genesis: &InitializedGenesis,
+        identity: &Ed25519Identity,
+        recipient: AccountId,
+        amount: u128,
+    ) -> Block {
+        let sender = AccountId::try_from_ed25519_public_key(
+            NetworkId::Development,
+            &identity.public_key(),
+        )
+        .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -202,13 +211,13 @@ mod tests {
             genesis.chain_id(),
             sender,
             recipient,
-            asset_id,
-            100,
+            AssetId::new([4u8; 32]),
+            amount,
             0,
         )
         .unwrap();
 
-        let signature = sign_transaction(&transaction, &identity);
+        let signature = sign_transaction(&transaction, identity);
 
         let signed_transaction = crate::block::SignedTransaction {
             transaction,
@@ -228,20 +237,23 @@ mod tests {
 
     #[test]
     fn new_chain_starts_at_genesis_height() {
-        let genesis = test_genesis();
+        let (genesis, _, _) = test_genesis();
         let chain = Chain::new(&genesis).unwrap();
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
-        assert_eq!(chain.latest_hash().as_bytes(), genesis.genesis_hash().as_bytes());
+        assert_eq!(
+            chain.latest_hash().as_bytes(),
+            genesis.genesis_hash().as_bytes()
+        );
     }
 
     #[test]
     fn valid_block_is_accepted() {
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(&chain, &genesis);
+        let block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
 
         assert_eq!(chain.apply_block(block), Ok(()));
         assert_eq!(chain.height(), 1);
@@ -250,10 +262,10 @@ mod tests {
 
     #[test]
     fn invalid_block_does_not_change_chain() {
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let mut block = create_valid_block(&chain, &genesis);
+        let mut block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
         block.header.height = 5;
 
         let previous_state = chain.state.clone();
@@ -261,9 +273,7 @@ mod tests {
 
         assert_eq!(
             chain.apply_block(block),
-            Err(ChainError::InvalidBlock(
-                BlockValidationError::WrongHeight
-            ))
+            Err(ChainError::InvalidBlock(BlockValidationError::WrongHeight))
         );
 
         assert_eq!(chain.height(), 0);
@@ -273,16 +283,20 @@ mod tests {
 
     #[test]
     fn failed_transaction_does_not_partially_update_chain_state() {
-        let genesis = test_genesis();
+        let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let mut block = create_valid_block(&chain, &genesis);
-        block.transactions[0].transaction.amount = 2_000;
+        let block = create_valid_block(&chain, &genesis, &identity, recipient, 2_000);
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
 
-        assert!(chain.apply_block(block).is_err());
+        assert_eq!(
+            chain.apply_block(block),
+            Err(ChainError::TransactionExecution(
+                ExecutionError::InsufficientBalance
+            ))
+        );
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.state, previous_state);
