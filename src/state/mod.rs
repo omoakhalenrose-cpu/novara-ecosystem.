@@ -1,12 +1,14 @@
-//! NOVARA application state foundation.
+//! NOVARA application state.
 //!
-//! This module stores account balances and transaction nonces.
-//! It supports multiple digital assets per account.
+//! Stores account balances and transaction nonces.
+//! Supports multiple digital assets per account.
 
 use std::collections::BTreeMap;
 
 use crate::account::address::AccountId;
+use crate::genesis::{GenesisConfig, GenesisError};
 use crate::transaction::AssetId;
+
 pub mod execution;
 
 /// Stores the state belonging to one account.
@@ -31,7 +33,10 @@ impl AccountState {
 
     /// Returns the balance of a particular asset.
     pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
+        self.balances
+            .get(asset_id.as_bytes())
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -40,6 +45,13 @@ impl AccountState {
 pub enum StateError {
     AccountAlreadyExists,
     AccountNotFound,
+}
+
+/// Errors returned during genesis state initialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenesisInitializationError {
+    InvalidConfiguration(GenesisError),
+    BalanceOverflow,
 }
 
 /// Stores NOVARA's application state.
@@ -52,6 +64,41 @@ impl State {
     /// Creates an empty application state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Initializes application state from a validated genesis configuration.
+    pub fn from_genesis(
+        config: &GenesisConfig,
+    ) -> Result<Self, GenesisInitializationError> {
+        config
+            .validate()
+            .map_err(GenesisInitializationError::InvalidConfiguration)?;
+
+        let mut state = Self::new();
+
+        for allocation in &config.allocations {
+            let account_key = *allocation.account_id.as_bytes();
+            let asset_key = *allocation.asset_id.as_bytes();
+
+            let account = state
+                .accounts
+                .entry(account_key)
+                .or_insert_with(AccountState::new);
+
+            let current_balance = account
+                .balances
+                .get(&asset_key)
+                .copied()
+                .unwrap_or(0);
+
+            let new_balance = current_balance
+                .checked_add(allocation.amount)
+                .ok_or(GenesisInitializationError::BalanceOverflow)?;
+
+            account.balances.insert(asset_key, new_balance);
+        }
+
+        Ok(state)
     }
 
     /// Creates a new account in application state.
@@ -105,9 +152,23 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::network::NetworkId;
+    use crate::genesis::GenesisAllocation;
 
     fn sample_account(value: u8) -> AccountId {
         AccountId::new([value; 32])
+    }
+
+    fn sample_allocation(
+        account_id: AccountId,
+        asset_id: AssetId,
+        amount: u128,
+    ) -> GenesisAllocation {
+        GenesisAllocation {
+            account_id,
+            asset_id,
+            amount,
+        }
     }
 
     #[test]
@@ -166,5 +227,61 @@ mod tests {
         let account = sample_account(1);
 
         assert_eq!(state.nonce_of(&account), Err(StateError::AccountNotFound));
+    }
+
+    #[test]
+    fn genesis_initializes_account_balance() {
+        let account = sample_account(1);
+        let asset = AssetId::new([5u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![sample_allocation(account, asset, 1_000)],
+        );
+
+        let state = State::from_genesis(&config).unwrap();
+
+        assert_eq!(state.account_count(), 1);
+        assert_eq!(state.balance_of(&account, &asset), Ok(1_000));
+        assert_eq!(state.nonce_of(&account), Ok(0));
+    }
+
+    #[test]
+    fn genesis_can_allocate_multiple_assets_to_one_account() {
+        let account = sample_account(1);
+        let first_asset = AssetId::new([5u8; 32]);
+        let second_asset = AssetId::new([6u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![
+                sample_allocation(account, first_asset, 500),
+                sample_allocation(account, second_asset, 750),
+            ],
+        );
+
+        let state = State::from_genesis(&config).unwrap();
+
+        assert_eq!(state.account_count(), 1);
+        assert_eq!(state.balance_of(&account, &first_asset), Ok(500));
+        assert_eq!(state.balance_of(&account, &second_asset), Ok(750));
+    }
+
+    #[test]
+    fn invalid_genesis_is_rejected() {
+        let account = sample_account(1);
+        let asset = AssetId::new([5u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![sample_allocation(account, asset, 0)],
+        );
+
+        assert!(matches!(
+            State::from_genesis(&config),
+            Err(GenesisInitializationError::InvalidConfiguration(
+                GenesisError::ZeroAllocation
+            ))
+        ));
     }
 }
