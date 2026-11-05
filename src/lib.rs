@@ -4,6 +4,7 @@
 
 pub mod account;
 pub mod block;
+pub mod chain;
 pub mod crypto;
 pub mod genesis;
 pub mod state;
