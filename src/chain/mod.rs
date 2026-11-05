@@ -108,9 +108,10 @@ impl Chain {
     /// execute against a cloned state. The chain and application state are
     /// updated only if every transaction executes successfully.
     pub fn apply_block(&mut self, block: Block) -> Result<(), ChainError> {
-                let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+        let expected_height = self
+            .height()
+            .checked_add(1)
+            .ok_or(ChainError::InvalidBlock(BlockValidationError::WrongHeight))?;
 
         let expected_previous_hash = self.latest_hash();
 
@@ -160,11 +161,9 @@ mod tests {
     fn test_genesis() -> (InitializedGenesis, Ed25519Identity, AccountId) {
         let identity = Ed25519Identity::generate();
 
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
@@ -196,11 +195,9 @@ mod tests {
         recipient: AccountId,
         amount: u128,
     ) -> Block {
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let transaction = Transaction::new(
             1,
