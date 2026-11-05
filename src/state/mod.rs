@@ -259,6 +259,48 @@ mod tests {
     }
 
     #[test]
+    fn genesis_can_allocate_to_multiple_accounts() {
+        let first_account = sample_account(1);
+        let second_account = sample_account(2);
+        let asset = AssetId::new([5u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![
+                sample_allocation(first_account, asset, 1_000),
+                sample_allocation(second_account, asset, 2_000),
+            ],
+        );
+
+        let state = State::from_genesis(&config).unwrap();
+
+        assert_eq!(state.account_count(), 2);
+        assert_eq!(state.balance_of(&first_account, &asset), Ok(1_000));
+        assert_eq!(state.balance_of(&second_account, &asset), Ok(2_000));
+    }
+
+    #[test]
+    fn duplicate_genesis_allocation_is_rejected() {
+        let account = sample_account(1);
+        let asset = AssetId::new([5u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![
+                sample_allocation(account, asset, 1_000),
+                sample_allocation(account, asset, 2_000),
+            ],
+        );
+
+        assert_eq!(
+            State::from_genesis(&config),
+            Err(GenesisInitializationError::InvalidConfiguration(
+                GenesisError::DuplicateAllocation
+            ))
+        );
+    }
+
+    #[test]
     fn invalid_genesis_is_rejected() {
         let account = sample_account(1);
         let asset = AssetId::new([5u8; 32]);
@@ -268,11 +310,11 @@ mod tests {
             vec![sample_allocation(account, asset, 0)],
         );
 
-        assert!(matches!(
+        assert_eq!(
             State::from_genesis(&config),
             Err(GenesisInitializationError::InvalidConfiguration(
                 GenesisError::ZeroAllocation
             ))
-        ));
+        );
     }
 }
