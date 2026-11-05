@@ -32,10 +32,7 @@ pub struct GenesisConfig {
 
 impl GenesisConfig {
     /// Creates a new genesis configuration.
-    pub fn new(
-        network: NetworkId,
-        allocations: Vec<GenesisAllocation>,
-    ) -> Self {
+    pub fn new(network: NetworkId, allocations: Vec<GenesisAllocation>) -> Self {
         Self {
             network,
             allocations,
