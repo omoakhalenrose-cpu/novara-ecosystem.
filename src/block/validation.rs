@@ -81,8 +81,7 @@ mod tests {
         let identity = Ed25519Identity::generate();
         let network = NetworkId::Development;
 
-        let genesis =
-            InitializedGenesis::new(GenesisConfig::new(network, Vec::new())).unwrap();
+        let genesis = InitializedGenesis::new(GenesisConfig::new(network, Vec::new())).unwrap();
 
         let chain_id = genesis.chain_id();
         let genesis_hash = genesis.genesis_hash();
