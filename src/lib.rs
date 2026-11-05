@@ -4,6 +4,7 @@
 
 pub mod account;
 pub mod crypto;
+pub mod genesis;
 pub mod state;
 pub mod transaction;
 
