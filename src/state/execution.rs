@@ -295,55 +295,55 @@ mod tests {
 
         assert_eq!(state, before);
     }
-       #[test]
-fn self_transfer_preserves_balance_and_increments_nonce() {
-    let identity = Ed25519Identity::generate();
 
-    let sender =
-        AccountId::try_from_ed25519_public_key(
+    #[test]
+    fn self_transfer_preserves_balance_and_increments_nonce() {
+        let identity = Ed25519Identity::generate();
+
+        let sender = AccountId::try_from_ed25519_public_key(
             NetworkId::Development,
             &identity.public_key(),
         )
         .unwrap();
 
-    let asset = AssetId::new([3u8; 32]);
-    let chain_id = ChainId::new([4u8; 32]);
+        let asset = AssetId::new([3u8; 32]);
+        let chain_id = ChainId::new([4u8; 32]);
 
-    let transaction = Transaction::new(
-        1,
-        NetworkId::Development,
-        chain_id,
-        sender,
-        sender,
-        asset,
-        100,
-        0,
-    )
-    .unwrap();
+        let transaction = Transaction::new(
+            1,
+            NetworkId::Development,
+            chain_id,
+            sender,
+            sender,
+            asset,
+            100,
+            0,
+        )
+        .unwrap();
 
-    let signature = sign_transaction(&transaction, &identity);
+        let signature = sign_transaction(&transaction, &identity);
 
-    let context = ValidationContext {
-        network: NetworkId::Development,
-        chain_id,
-    };
+        let context = ValidationContext {
+            network: NetworkId::Development,
+            chain_id,
+        };
 
-    let mut state = State::new();
-    state.create_account(sender).unwrap();
+        let mut state = State::new();
+        state.create_account(sender).unwrap();
 
-    state
-        .accounts
-        .get_mut(sender.as_bytes())
-        .unwrap()
-        .balances
-        .insert(*asset.as_bytes(), 1_000);
+        state
+            .accounts
+            .get_mut(sender.as_bytes())
+            .unwrap()
+            .balances
+            .insert(*asset.as_bytes(), 1_000);
 
-     assert_eq!(
-        state.execute_transaction(&transaction, &signature, &context),
-        Ok(())
-    );
+        assert_eq!(
+            state.execute_transaction(&transaction, &signature, &context),
+            Ok(())
+        );
 
-    assert_eq!(state.balance_of(&sender, &asset), Ok(1_000));
-    assert_eq!(state.nonce_of(&sender), Ok(1));
+        assert_eq!(state.balance_of(&sender, &asset), Ok(1_000));
+        assert_eq!(state.nonce_of(&sender), Ok(1));
     }
 }
