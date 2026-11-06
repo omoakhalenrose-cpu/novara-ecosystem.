@@ -225,7 +225,7 @@ impl Storage {
     /// The original validated genesis configuration is required to rebuild
     /// the initial application state. Every stored block is decoded,
     /// validated, and replayed in ascending height order.
-        pub fn recover_chain(&self, genesis: &InitializedGenesis) -> Result<Chain, StorageError> {
+    pub fn recover_chain(&self, genesis: &InitializedGenesis) -> Result<Chain, StorageError> { 
         let metadata = self
             .load_chain_metadata()?
             .ok_or(StorageError::ChainNotInitialized)?;
