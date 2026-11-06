@@ -111,9 +111,7 @@ impl Chain {
         let expected_height = self
             .height()
             .checked_add(1)
-            .ok_or(ChainError::InvalidBlock(
-                BlockValidationError::WrongHeight,
-            ))?;
+            .ok_or(ChainError::InvalidBlock(BlockValidationError::WrongHeight))?;
 
         let expected_previous_hash = self.latest_hash();
 
@@ -125,8 +123,7 @@ impl Chain {
             expected_previous_hash,
         };
 
-        validate_block(&block, &block_context)
-            .map_err(ChainError::InvalidBlock)?;
+        validate_block(&block, &block_context).map_err(ChainError::InvalidBlock)?;
 
         let transaction_context = ValidationContext {
             network: self.network,
@@ -174,11 +171,8 @@ mod tests {
         let identity = Ed25519Identity::generate();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
@@ -211,11 +205,8 @@ mod tests {
         amount: u128,
     ) -> Block {
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -284,13 +275,7 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(
-            &chain,
-            &genesis,
-            &identity,
-            recipient,
-            100,
-        );
+        let block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
 
         assert_eq!(chain.apply_block(block), Ok(()));
         assert_eq!(chain.height(), 1);
@@ -302,13 +287,7 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let mut block = create_valid_block(
-            &chain,
-            &genesis,
-            &identity,
-            recipient,
-            100,
-        );
+        let mut block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
 
         // Deliberately corrupt the State Root commitment.
         block.header.state_root = [9u8; 32];
@@ -316,10 +295,7 @@ mod tests {
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
 
-        assert_eq!(
-            chain.apply_block(block),
-            Err(ChainError::StateRootMismatch)
-        );
+        assert_eq!(chain.apply_block(block), Err(ChainError::StateRootMismatch));
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
@@ -332,13 +308,7 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let mut block = create_valid_block(
-            &chain,
-            &genesis,
-            &identity,
-            recipient,
-            100,
-        );
+        let mut block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
 
         block.header.height = 5;
 
@@ -347,9 +317,7 @@ mod tests {
 
         assert_eq!(
             chain.apply_block(block),
-            Err(ChainError::InvalidBlock(
-                BlockValidationError::WrongHeight
-            ))
+            Err(ChainError::InvalidBlock(BlockValidationError::WrongHeight))
         );
 
         assert_eq!(chain.height(), 0);
@@ -362,13 +330,7 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(
-            &chain,
-            &genesis,
-            &identity,
-            recipient,
-            2_000,
-        );
+        let block = create_valid_block(&chain, &genesis, &identity, recipient, 2_000);
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
