@@ -778,8 +778,7 @@ mod tests {
 
         assert!(loaded.is_none());
     }
-    
+
     #[test]
-    fn recovers_chain_after_database_reopen() {
-    }
+    fn recovers_chain_after_database_reopen() {}
 }
