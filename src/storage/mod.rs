@@ -498,7 +498,7 @@ mod tests {
         let sender =
             AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
                 .unwrap();
-
+        // This helper calculates candidate state from genesis, so use the genesis nonce.
         let transaction = Transaction::new(
             1,
             NetworkId::Development,
@@ -507,7 +507,7 @@ mod tests {
             recipient,
             AssetId::new([4u8; 32]),
             amount,
-            height - 1,
+            0,
         )
         .unwrap();
 
