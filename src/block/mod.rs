@@ -9,11 +9,11 @@ use crate::transaction::{AssetId, ChainId, Transaction};
 
 pub mod validation;
 
-/// Domain separator for NOVARA block hashing version 1.
-const BLOCK_DOMAIN: &[u8] = b"NOVARA_BLOCK_V1";
+/// Domain separator for NOVARA block hashing version 2.
+const BLOCK_DOMAIN: &[u8] = b"NOVARA_BLOCK_V2";
 
-/// Domain separator for serialized NOVARA blocks.
-const BLOCK_ENCODING_DOMAIN: &[u8] = b"NOVARA_BLOCK_ENCODING_V1";
+/// Domain separator for serialized NOVARA blocks version 2.
+const BLOCK_ENCODING_DOMAIN: &[u8] = b"NOVARA_BLOCK_ENCODING_V2";
 
 /// Domain separator for serialized NOVARA transactions.
 const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
@@ -48,6 +48,7 @@ pub struct BlockHeader {
     pub height: u64,
     pub timestamp: u64,
     pub previous_hash: BlockHash,
+    pub state_root: [u8; 32],
 }
 
 /// A NOVARA block containing signed transactions.
@@ -69,6 +70,7 @@ pub enum BlockDecodeError {
 }
 
 impl Block {
+    /// Creates a new V2 block with its resulting application State Root.
     pub fn new(
         network: NetworkId,
         chain_id: ChainId,
@@ -76,6 +78,7 @@ impl Block {
         height: u64,
         timestamp: u64,
         previous_hash: BlockHash,
+        state_root: [u8; 32],
         transactions: Vec<SignedTransaction>,
     ) -> Self {
         Self {
@@ -86,6 +89,7 @@ impl Block {
                 height,
                 timestamp,
                 previous_hash,
+                state_root,
             },
             transactions,
         }
@@ -93,7 +97,8 @@ impl Block {
 
     /// Calculates the deterministic SHA-256 block hash.
     ///
-    /// This preserves the original NOVARA_BLOCK_V1 hashing format.
+    /// The State Root is included so that changing the resulting
+    /// application state changes the block hash.
     pub fn hash(&self) -> BlockHash {
         let mut hasher = Sha256::new();
 
@@ -104,6 +109,7 @@ impl Block {
         hasher.update(self.header.height.to_be_bytes());
         hasher.update(self.header.timestamp.to_be_bytes());
         hasher.update(self.header.previous_hash.as_bytes());
+        hasher.update(self.header.state_root);
 
         hasher.update((self.transactions.len() as u64).to_be_bytes());
 
@@ -119,7 +125,7 @@ impl Block {
         BlockHash::new(hasher.finalize().into())
     }
 
-    /// Serializes the complete block into a versioned binary format.
+    /// Serializes the complete block into the V2 binary format.
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
 
@@ -130,6 +136,7 @@ impl Block {
         bytes.extend_from_slice(&self.header.height.to_be_bytes());
         bytes.extend_from_slice(&self.header.timestamp.to_be_bytes());
         bytes.extend_from_slice(self.header.previous_hash.as_bytes());
+        bytes.extend_from_slice(&self.header.state_root);
 
         bytes.extend_from_slice(&(self.transactions.len() as u64).to_be_bytes());
 
@@ -145,7 +152,7 @@ impl Block {
         bytes
     }
 
-    /// Reconstructs a block from bytes and checks its expected genesis.
+    /// Reconstructs a V2 block from bytes and checks its expected genesis.
     pub fn decode(
         bytes: &[u8],
         expected_genesis_hash: GenesisHash,
@@ -168,6 +175,7 @@ impl Block {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let previous_hash = BlockHash::new(reader.read_array::<32>()?);
+        let state_root = reader.read_array::<32>()?;
 
         let transaction_count = reader.read_u64()?;
 
@@ -212,6 +220,7 @@ impl Block {
             height,
             timestamp,
             previous_hash,
+            state_root,
             transactions,
         ))
     }
@@ -325,6 +334,7 @@ mod tests {
             1,
             1_000,
             BlockHash::new([0u8; 32]),
+            [1u8; 32],
             Vec::new(),
         )
     }
@@ -349,6 +359,7 @@ mod tests {
             2,
             1_000,
             BlockHash::new([0u8; 32]),
+            [1u8; 32],
             Vec::new(),
         );
 
@@ -367,6 +378,7 @@ mod tests {
             1,
             1_000,
             BlockHash::new([2u8; 32]),
+            [1u8; 32],
             Vec::new(),
         );
 
@@ -385,6 +397,7 @@ mod tests {
             1,
             2_000,
             BlockHash::new([0u8; 32]),
+            [1u8; 32],
             Vec::new(),
         );
 
@@ -414,6 +427,26 @@ mod tests {
             1,
             1_000,
             BlockHash::new([0u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        );
+
+        assert_ne!(first.hash(), second.hash());
+    }
+
+    #[test]
+    fn different_state_roots_produce_different_block_hashes() {
+        let genesis = test_genesis();
+        let first = empty_block(&genesis);
+
+        let second = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            [2u8; 32],
             Vec::new(),
         );
 
@@ -430,6 +463,7 @@ mod tests {
 
         assert_eq!(decoded, block);
         assert_eq!(decoded.hash(), block.hash());
+        assert_eq!(decoded.header.state_root, block.header.state_root);
     }
 
     #[test]
