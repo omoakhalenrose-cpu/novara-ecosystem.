@@ -222,6 +222,7 @@ mod tests {
             chain.height() + 1,
             1_000,
             chain.latest_hash(),
+            [0u8; 32],
             vec![signed_transaction],
         )
     }
