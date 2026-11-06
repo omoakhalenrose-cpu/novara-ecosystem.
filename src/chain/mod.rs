@@ -37,8 +37,7 @@ impl Chain {
     ///
     /// Genesis represents height zero. The first accepted block has height one.
     pub fn new(genesis: &InitializedGenesis) -> Result<Self, ChainError> {
-        let state = State::from_genesis(genesis)
-            .map_err(ChainError::GenesisInitialization)?;
+        let state = State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
 
         Ok(Self {
             network: genesis.config().network,
