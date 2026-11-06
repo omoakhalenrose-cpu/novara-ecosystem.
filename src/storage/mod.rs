@@ -257,9 +257,9 @@ impl Storage {
 
         match metadata.height {
             0 => {
-                if maximum_height.is_some()
-                    || metadata.latest_block_hash != metadata.genesis_hash
-                {
+            if maximum_height.is_some() || metadata.latest_block_hash != metadata.genesis_hash {
+                    return Err(StorageError::InvalidStoredChain);
+                                }
                     return Err(StorageError::InvalidStoredChain);
                 }
             }
