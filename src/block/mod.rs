@@ -71,6 +71,7 @@ pub enum BlockDecodeError {
 
 impl Block {
     /// Creates a new V2 block with its resulting application State Root.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         network: NetworkId,
         chain_id: ChainId,
