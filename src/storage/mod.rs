@@ -284,11 +284,11 @@ impl Storage {
                 .map_err(StorageError::ChainRecovery)?;
         }
 
-        if chain.height() != metadata.height {
+                if chain.height() != metadata.height {
             return Err(StorageError::InvalidStoredChain);
         }
 
-                if chain.latest_hash().as_bytes() != &metadata.latest_block_hash {
+        if chain.latest_hash().as_bytes() != &metadata.latest_block_hash {
             return Err(StorageError::InvalidStoredChain);
         }
 
