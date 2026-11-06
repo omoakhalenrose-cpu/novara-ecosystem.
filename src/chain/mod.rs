@@ -5,7 +5,7 @@
 //! and State Root verification.
 
 use crate::account::network::NetworkId;
-use crate::block::validation::{validate_block, BlockValidationContext, BlockValidationError};
+use crate::block::validation::{BlockValidationContext, BlockValidationError, validate_block};
 use crate::block::{Block, BlockHash};
 use crate::genesis::{GenesisHash, InitializedGenesis};
 use crate::state::execution::ExecutionError;
