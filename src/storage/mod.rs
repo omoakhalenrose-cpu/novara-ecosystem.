@@ -297,10 +297,6 @@ impl Storage {
             return Err(StorageError::InvalidStoredChain);
         }
 
-                if chain.latest_hash().as_bytes() != &metadata.latest_block_hash {
-            return Err(StorageError::InvalidStoredChain);
-        }
-
         Ok(chain)
     }
 
