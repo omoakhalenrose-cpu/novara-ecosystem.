@@ -520,6 +520,7 @@ mod tests {
             height,
             1_000 + height,
             previous_hash,
+            [0u8; 32],
             vec![crate::block::SignedTransaction {
                 transaction,
                 signature,
