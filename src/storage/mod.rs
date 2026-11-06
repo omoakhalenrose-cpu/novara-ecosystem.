@@ -783,5 +783,5 @@ mod tests {
     fn recovers_chain_after_database_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("novara-test.db");
-    
-}
+    }
+}   
