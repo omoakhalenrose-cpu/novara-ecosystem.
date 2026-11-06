@@ -242,17 +242,12 @@ impl Storage {
             return Err(StorageError::WrongGenesis);
         }
 
-                let (block_count, maximum_height): (i64, Option<i64>) =
+        let (block_count, maximum_height): (i64, Option<i64>) =
             self.connection
                 .query_row("SELECT COUNT(*), MAX(height) FROM blocks", [], |row| {
                     Ok((row.get(0)?, row.get(1)?))
                 })?;
-            .connection
-            .query_row(
-                "SELECT COUNT(*), MAX(height) FROM blocks",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
+
 
         let stored_block_count =
             u64::try_from(block_count).map_err(|_| StorageError::InvalidStoredChain)?;
