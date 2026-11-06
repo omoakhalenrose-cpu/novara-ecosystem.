@@ -344,4 +344,38 @@ mod tests {
         assert_eq!(state.balance_of(&sender, &asset), Ok(1_000));
         assert_eq!(state.nonce_of(&sender), Ok(1));
     }
+
+    #[test]
+    fn transfer_preserves_total_asset_balance() {
+        let (mut state, transaction, signature, context) = setup(300, 0);
+
+        let sender_before = state
+            .balance_of(&transaction.sender, &transaction.asset_id)
+            .unwrap();
+
+        let recipient_before = state
+            .balance_of(&transaction.recipient, &transaction.asset_id)
+            .unwrap();
+
+        let total_before = sender_before + recipient_before;
+
+        assert_eq!(
+            state.execute_transaction(&transaction, &signature, &context),
+            Ok(())
+        );
+
+        let sender_after = state
+            .balance_of(&transaction.sender, &transaction.asset_id)
+            .unwrap();
+
+        let recipient_after = state
+            .balance_of(&transaction.recipient, &transaction.asset_id)
+            .unwrap();
+
+        let total_after = sender_after + recipient_after;
+
+        assert_eq!(sender_after, 700);
+        assert_eq!(recipient_after, 300);
+        assert_eq!(total_after, total_before);
+    }
 }
