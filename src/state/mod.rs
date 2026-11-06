@@ -2,14 +2,20 @@
 //!
 //! Stores account balances and transaction nonces.
 //! Supports multiple digital assets per account.
+//! Provides deterministic cryptographic state roots.
 
 use std::collections::BTreeMap;
+
+use sha2::{Digest, Sha256};
 
 use crate::account::address::AccountId;
 use crate::genesis::InitializedGenesis;
 use crate::transaction::AssetId;
 
 pub mod execution;
+
+/// Domain separator for NOVARA application state hashes.
+const STATE_ROOT_DOMAIN: &[u8] = b"NOVARA_STATE_ROOT_V1";
 
 /// Stores the state belonging to one account.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +39,10 @@ impl AccountState {
 
     /// Returns the balance of a particular asset.
     pub fn balance(&self, asset_id: &AssetId) -> u128 {
-        self.balances.get(asset_id.as_bytes()).copied().unwrap_or(0)
+        self.balances
+            .get(asset_id.as_bytes())
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -63,7 +72,9 @@ impl State {
     }
 
     /// Initializes application state from a validated genesis.
-    pub fn from_genesis(genesis: &InitializedGenesis) -> Result<Self, GenesisInitializationError> {
+    pub fn from_genesis(
+        genesis: &InitializedGenesis,
+    ) -> Result<Self, GenesisInitializationError> {
         let config = genesis.config();
         let mut state = Self::new();
 
@@ -133,6 +144,32 @@ impl State {
     /// Returns the number of accounts stored in the state.
     pub fn account_count(&self) -> usize {
         self.accounts.len()
+    }
+
+    /// Calculates a deterministic SHA-256 root of the entire application state.
+    ///
+    /// Accounts and assets are hashed in sorted order because they are stored
+    /// in BTreeMaps. Identical application states therefore produce identical
+    /// state roots, regardless of insertion order.
+    pub fn state_root(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+
+        hasher.update(STATE_ROOT_DOMAIN);
+        hasher.update((self.accounts.len() as u64).to_le_bytes());
+
+        for (account_id, account_state) in &self.accounts {
+            hasher.update(account_id);
+            hasher.update(account_state.nonce.to_le_bytes());
+
+            hasher.update((account_state.balances.len() as u64).to_le_bytes());
+
+            for (asset_id, balance) in &account_state.balances {
+                hasher.update(asset_id);
+                hasher.update(balance.to_le_bytes());
+            }
+        }
+
+        hasher.finalize().into()
     }
 }
 
@@ -298,5 +335,62 @@ mod tests {
 
         assert!(state.account_exists(&account));
         assert_eq!(state.balance_of(&account, &asset), Ok(1_000));
+    }
+
+    #[test]
+    fn identical_states_produce_identical_state_roots() {
+        let account = sample_account(1);
+        let asset = AssetId::new([5u8; 32]);
+
+        let config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![sample_allocation(account, asset, 1_000)],
+        );
+
+        let genesis = initialize_genesis(config);
+        let first_state = State::from_genesis(&genesis).unwrap();
+        let second_state = State::from_genesis(&genesis).unwrap();
+
+        assert_eq!(first_state.state_root(), second_state.state_root());
+    }
+
+    #[test]
+    fn different_balances_produce_different_state_roots() {
+        let account = sample_account(1);
+        let asset = AssetId::new([5u8; 32]);
+
+        let first_config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![sample_allocation(account, asset, 1_000)],
+        );
+
+        let second_config = GenesisConfig::new(
+            NetworkId::Development,
+            vec![sample_allocation(account, asset, 2_000)],
+        );
+
+        let first_state =
+            State::from_genesis(&initialize_genesis(first_config)).unwrap();
+
+        let second_state =
+            State::from_genesis(&initialize_genesis(second_config)).unwrap();
+
+        assert_ne!(first_state.state_root(), second_state.state_root());
+    }
+
+    #[test]
+    fn account_insertion_order_does_not_change_state_root() {
+        let first_account = sample_account(1);
+        let second_account = sample_account(2);
+
+        let mut first_state = State::new();
+        first_state.create_account(first_account).unwrap();
+        first_state.create_account(second_account).unwrap();
+
+        let mut second_state = State::new();
+        second_state.create_account(second_account).unwrap();
+        second_state.create_account(first_account).unwrap();
+
+        assert_eq!(first_state.state_root(), second_state.state_root());
     }
 }
