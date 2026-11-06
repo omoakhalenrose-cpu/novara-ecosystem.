@@ -329,7 +329,36 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(&chain, &genesis, &identity, recipient, 2_000);
+        // Build this failing transaction explicitly: create_valid_block executes
+        // its transaction to calculate a valid post-transaction State Root.
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
+        let transaction = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            AssetId::new([4u8; 32]),
+            2_000,
+            0,
+        )
+        .unwrap();
+        let signed_transaction = crate::block::SignedTransaction {
+            signature: sign_transaction(&transaction, &identity),
+            transaction,
+        };
+        let block = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            chain.height() + 1,
+            1_000,
+            chain.latest_hash(),
+            chain.state.state_root(),
+            vec![signed_transaction],
+        );
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();

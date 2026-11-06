@@ -454,7 +454,9 @@ mod tests {
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
     use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
+    use crate::state::State;
     use crate::transaction::signing::sign_transaction;
+    use crate::transaction::validation::ValidationContext;
     use crate::transaction::{AssetId, Transaction};
 
     fn test_genesis() -> (InitializedGenesis, Ed25519Identity, AccountId) {
@@ -512,6 +514,18 @@ mod tests {
         .unwrap();
 
         let signature = sign_transaction(&transaction, identity);
+        let transaction_context = ValidationContext {
+            network: NetworkId::Development,
+            chain_id: genesis.chain_id(),
+        };
+        let initial_state = State::from_genesis(genesis).unwrap();
+        let mut candidate_state = initial_state.clone();
+
+        candidate_state
+            .execute_transaction(&transaction, &signature, &transaction_context)
+            .unwrap();
+
+        let expected_state_root = candidate_state.state_root();
 
         Block::new(
             NetworkId::Development,
@@ -520,7 +534,7 @@ mod tests {
             height,
             1_000 + height,
             previous_hash,
-            [0u8; 32],
+            expected_state_root,
             vec![crate::block::SignedTransaction {
                 transaction,
                 signature,
