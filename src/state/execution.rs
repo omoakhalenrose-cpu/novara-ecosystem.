@@ -300,11 +300,9 @@ mod tests {
     fn self_transfer_preserves_balance_and_increments_nonce() {
         let identity = Ed25519Identity::generate();
 
-        let sender = AccountId::try_from_ed25519_public_key(
-            NetworkId::Development,
-            &identity.public_key(),
-        )
-        .unwrap();
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let asset = AssetId::new([3u8; 32]);
         let chain_id = ChainId::new([4u8; 32]);
