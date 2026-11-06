@@ -783,5 +783,25 @@ mod tests {
     fn recovers_chain_after_database_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("novara-test.db");
+        let (genesis, identity, recipient) = test_genesis();
+        let expected_hash;
+
+        {
+            let mut storage = Storage::open(&database_path).unwrap();
+            storage.initialize_chain(&genesis).unwrap();
+
+            let previous_hash = BlockHash::new(*genesis.genesis_hash().as_bytes());
+            let block = test_block(&genesis, &identity, recipient, 1, previous_hash, 100);
+            expected_hash = block.hash();
+
+            storage.save_block(&block).unwrap();
+        }
+
+        let storage = Storage::open(&database_path).unwrap();
+        let recovered = storage.recover_chain(&genesis).unwrap();
+
+        assert_eq!(recovered.height(), 1);
+        assert_eq!(recovered.block_count(), 1);
+        assert_eq!(recovered.latest_hash(), expected_hash);
     }
 }
