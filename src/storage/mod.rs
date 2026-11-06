@@ -225,7 +225,7 @@ impl Storage {
     /// The original validated genesis configuration is required to rebuild
     /// the initial application state. Every stored block is decoded,
     /// validated, and replayed in ascending height order.
-    pub fn recover_chain(&self, genesis: &InitializedGenesis) -> Result<Chain, StorageError> {
+        pub fn recover_chain(&self, genesis: &InitializedGenesis) -> Result<Chain, StorageError> {
         let metadata = self
             .load_chain_metadata()?
             .ok_or(StorageError::ChainNotInitialized)?;
@@ -257,9 +257,7 @@ impl Storage {
 
         match metadata.height {
             0 => {
-            if maximum_height.is_some() || metadata.latest_block_hash != metadata.genesis_hash {
-                    return Err(StorageError::InvalidStoredChain);
-                                }
+                if maximum_height.is_some() || metadata.latest_block_hash != metadata.genesis_hash {
                     return Err(StorageError::InvalidStoredChain);
                 }
             }
@@ -284,7 +282,7 @@ impl Storage {
                 .map_err(StorageError::ChainRecovery)?;
         }
 
-                if chain.height() != metadata.height {
+        if chain.height() != metadata.height {
             return Err(StorageError::InvalidStoredChain);
         }
 
@@ -293,7 +291,8 @@ impl Storage {
         }
 
         Ok(chain)
-    }
+        }
+
 
     /// Saves a block only when it extends the persisted chain tip.
     /// Block insertion and chain metadata updates happen atomically.
