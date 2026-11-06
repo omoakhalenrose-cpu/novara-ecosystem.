@@ -5,7 +5,7 @@
 //! and State Root verification.
 
 use crate::account::network::NetworkId;
-use crate::block::validation::{BlockValidationContext, BlockValidationError, validate_block};
+use crate::block::validation::{validate_block, BlockValidationContext, BlockValidationError};
 use crate::block::{Block, BlockHash};
 use crate::genesis::{GenesisHash, InitializedGenesis};
 use crate::state::execution::ExecutionError;
@@ -329,7 +329,40 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(&chain, &genesis, &identity, recipient, 2_000);
+        let sender =
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
+
+        // This signed transaction exceeds the sender's genesis balance.
+        // Build the block directly so the test exercises apply_block's
+        // rejection path rather than panicking inside create_valid_block.
+        let transaction = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            AssetId::new([4u8; 32]),
+            2_000,
+            0,
+        )
+        .unwrap();
+
+        let signature = sign_transaction(&transaction, &identity);
+
+        let block = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            chain.height() + 1,
+            1_000,
+            chain.latest_hash(),
+            chain.state.state_root(),
+            vec![crate::block::SignedTransaction {
+                transaction,
+                signature,
+            }],
+        );
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
@@ -342,6 +375,7 @@ mod tests {
         );
 
         assert_eq!(chain.height(), 0);
+        assert_eq!(chain.block_count(), 0);
         assert_eq!(chain.state, previous_state);
         assert_eq!(chain.latest_hash(), previous_hash);
     }
