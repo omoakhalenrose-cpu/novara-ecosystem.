@@ -116,6 +116,7 @@ mod tests {
             1,
             1_000,
             previous_hash,
+            [0u8; 32],
             vec![signed_transaction],
         );
 
