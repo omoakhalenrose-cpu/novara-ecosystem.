@@ -1,7 +1,8 @@
 //! NOVARA blockchain chain management.
 //!
 //! Maintains the ordered block sequence and application state.
-//! Blocks are accepted only after validation and successful execution.
+//! Blocks are accepted only after validation, successful execution,
+//! and State Root verification.
 
 use crate::account::network::NetworkId;
 use crate::block::validation::{BlockValidationContext, BlockValidationError, validate_block};
@@ -18,6 +19,7 @@ pub enum ChainError {
     GenesisInitialization(GenesisInitializationError),
     InvalidBlock(BlockValidationError),
     TransactionExecution(ExecutionError),
+    StateRootMismatch,
 }
 
 /// Maintains NOVARA's ordered blockchain and application state.
@@ -35,7 +37,8 @@ impl Chain {
     ///
     /// Genesis represents height zero. The first accepted block has height one.
     pub fn new(genesis: &InitializedGenesis) -> Result<Self, ChainError> {
-        let state = State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
+        let state = State::from_genesis(genesis)
+            .map_err(ChainError::GenesisInitialization)?;
 
         Ok(Self {
             network: genesis.config().network,
@@ -101,14 +104,16 @@ impl Chain {
 
     /// Validates and applies a new block atomically.
     ///
-    /// The block is checked against the current chain tip. Transactions
-    /// execute against a cloned state. The chain and application state are
-    /// updated only if every transaction executes successfully.
+    /// Transactions execute against a cloned state.
+    /// The resulting State Root must match the root committed
+    /// in the block header before the chain can be updated.
     pub fn apply_block(&mut self, block: Block) -> Result<(), ChainError> {
         let expected_height = self
             .height()
             .checked_add(1)
-            .ok_or(ChainError::InvalidBlock(BlockValidationError::WrongHeight))?;
+            .ok_or(ChainError::InvalidBlock(
+                BlockValidationError::WrongHeight,
+            ))?;
 
         let expected_previous_hash = self.latest_hash();
 
@@ -120,13 +125,15 @@ impl Chain {
             expected_previous_hash,
         };
 
-        validate_block(&block, &block_context).map_err(ChainError::InvalidBlock)?;
+        validate_block(&block, &block_context)
+            .map_err(ChainError::InvalidBlock)?;
 
         let transaction_context = ValidationContext {
             network: self.network,
             chain_id: self.chain_id,
         };
 
+        // Execute transactions against temporary state.
         let mut candidate_state = self.state.clone();
 
         for signed_transaction in &block.transactions {
@@ -139,6 +146,14 @@ impl Chain {
                 .map_err(ChainError::TransactionExecution)?;
         }
 
+        // Verify that the executed state matches the block commitment.
+        let calculated_state_root = candidate_state.state_root();
+
+        if calculated_state_root != block.header.state_root {
+            return Err(ChainError::StateRootMismatch);
+        }
+
+        // Commit only after every validation succeeds.
         self.state = candidate_state;
         self.blocks.push(block);
 
@@ -159,8 +174,11 @@ mod tests {
         let identity = Ed25519Identity::generate();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
 
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
@@ -193,8 +211,11 @@ mod tests {
         amount: u128,
     ) -> Block {
         let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -215,6 +236,24 @@ mod tests {
             signature,
         };
 
+        // Calculate the expected state after executing this transaction.
+        let transaction_context = ValidationContext {
+            network: NetworkId::Development,
+            chain_id: genesis.chain_id(),
+        };
+
+        let mut candidate_state = chain.state.clone();
+
+        candidate_state
+            .execute_transaction(
+                &signed_transaction.transaction,
+                &signed_transaction.signature,
+                &transaction_context,
+            )
+            .unwrap();
+
+        let expected_state_root = candidate_state.state_root();
+
         Block::new(
             NetworkId::Development,
             genesis.chain_id(),
@@ -222,7 +261,7 @@ mod tests {
             chain.height() + 1,
             1_000,
             chain.latest_hash(),
-            [0u8; 32],
+            expected_state_root,
             vec![signed_transaction],
         )
     }
@@ -245,7 +284,13 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
+        let block = create_valid_block(
+            &chain,
+            &genesis,
+            &identity,
+            recipient,
+            100,
+        );
 
         assert_eq!(chain.apply_block(block), Ok(()));
         assert_eq!(chain.height(), 1);
@@ -253,11 +298,48 @@ mod tests {
     }
 
     #[test]
+    fn incorrect_state_root_is_rejected_atomically() {
+        let (genesis, identity, recipient) = test_genesis();
+        let mut chain = Chain::new(&genesis).unwrap();
+
+        let mut block = create_valid_block(
+            &chain,
+            &genesis,
+            &identity,
+            recipient,
+            100,
+        );
+
+        // Deliberately corrupt the State Root commitment.
+        block.header.state_root = [9u8; 32];
+
+        let previous_state = chain.state.clone();
+        let previous_hash = chain.latest_hash();
+
+        assert_eq!(
+            chain.apply_block(block),
+            Err(ChainError::StateRootMismatch)
+        );
+
+        assert_eq!(chain.height(), 0);
+        assert_eq!(chain.block_count(), 0);
+        assert_eq!(chain.state, previous_state);
+        assert_eq!(chain.latest_hash(), previous_hash);
+    }
+
+    #[test]
     fn invalid_block_does_not_change_chain() {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let mut block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
+        let mut block = create_valid_block(
+            &chain,
+            &genesis,
+            &identity,
+            recipient,
+            100,
+        );
+
         block.header.height = 5;
 
         let previous_state = chain.state.clone();
@@ -265,7 +347,9 @@ mod tests {
 
         assert_eq!(
             chain.apply_block(block),
-            Err(ChainError::InvalidBlock(BlockValidationError::WrongHeight))
+            Err(ChainError::InvalidBlock(
+                BlockValidationError::WrongHeight
+            ))
         );
 
         assert_eq!(chain.height(), 0);
@@ -278,7 +362,13 @@ mod tests {
         let (genesis, identity, recipient) = test_genesis();
         let mut chain = Chain::new(&genesis).unwrap();
 
-        let block = create_valid_block(&chain, &genesis, &identity, recipient, 2_000);
+        let block = create_valid_block(
+            &chain,
+            &genesis,
+            &identity,
+            recipient,
+            2_000,
+        );
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
