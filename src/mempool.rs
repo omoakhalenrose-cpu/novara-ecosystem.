@@ -1,12 +1,11 @@
 //! NOVARA transaction mempool.
 //!
-//! This module provides bounded pending-transaction storage,
-//! expiration, removal, statistics, and block-selection helpers.
+//! Provides bounded pending-transaction storage, expiration,
+//! removal, statistics, and block-selection helpers.
 //!
-//! IMPORTANT:
 //! Transactions must be validated by the caller before admission.
-//! This module does not independently verify signatures, balances,
-//! network identity, chain identity, or account nonces.
+//! This module does not independently verify signatures, network
+//! identity, chain identity, balances, or account nonces.
 
 use std::collections::BTreeMap;
 
@@ -78,7 +77,7 @@ pub struct Mempool {
 }
 
 impl Mempool {
-    /// Creates an empty mempool with the supplied configuration.
+    /// Creates an empty mempool.
     pub fn new(config: MempoolConfig) -> Self {
         Self {
             config,
@@ -88,7 +87,7 @@ impl Mempool {
         }
     }
 
-    /// Adds a transaction after the caller has validated it.
+    /// Adds a transaction after caller-side validation.
     pub fn admit(
         &mut self,
         transaction: PendingTransaction,
@@ -108,8 +107,7 @@ impl Mempool {
         }
 
         if self.transactions.len() >= self.config.max_transactions
-            || self.total_bytes.saturating_add(size)
-                > self.config.max_total_bytes
+            || self.total_bytes.saturating_add(size) > self.config.max_total_bytes
         {
             return Err(MempoolError::MempoolFull);
         }
@@ -165,18 +163,11 @@ impl Mempool {
         removed
     }
 
-    /// Removes a transaction by its identifier.
-    ///
-    /// Returns the removed transaction, if it existed.
-    pub fn remove(
-        &mut self,
-        id: &[u8; 32],
-    ) -> Option<PendingTransaction> {
+    /// Removes a transaction by identifier.
+    pub fn remove(&mut self, id: &[u8; 32]) -> Option<PendingTransaction> {
         let transaction = self.transactions.remove(id)?;
 
-        self.total_bytes = self
-            .total_bytes
-            .saturating_sub(transaction.size_bytes());
+        self.total_bytes = self.total_bytes.saturating_sub(transaction.size_bytes());
 
         let sender = transaction.sender;
 
@@ -196,7 +187,7 @@ impl Mempool {
 
     /// Selects transactions for a candidate block.
     ///
-    /// Higher fee-per-byte transactions are prioritised.
+    /// Higher fee-per-byte transactions receive priority.
     /// Older transactions break equal-priority ties.
     /// The sender limit prevents one sender from monopolising selection.
     ///
@@ -207,8 +198,7 @@ impl Mempool {
         maximum_transactions: usize,
         current_time: u64,
     ) -> Vec<PendingTransaction> {
-        let mut candidates: Vec<&PendingTransaction> =
-            self.transactions.values().collect();
+        let mut candidates: Vec<&PendingTransaction> = self.transactions.values().collect();
 
         candidates.sort_by(|a, b| {
             let a_size = a.size_bytes().max(1) as u128;
@@ -228,8 +218,7 @@ impl Mempool {
         });
 
         let mut selected = Vec::new();
-        let mut selected_per_sender: BTreeMap<[u8; 32], usize> =
-            BTreeMap::new();
+        let mut selected_per_sender: BTreeMap<[u8; 32], usize> = BTreeMap::new();
 
         for transaction in candidates {
             if selected.len() >= maximum_transactions {
@@ -245,9 +234,7 @@ impl Mempool {
                 continue;
             }
 
-            *selected_per_sender
-                .entry(transaction.sender)
-                .or_insert(0) += 1;
+            *selected_per_sender.entry(transaction.sender).or_insert(0) += 1;
 
             selected.push(transaction.clone());
         }
@@ -325,10 +312,7 @@ mod tests {
         let mut tx = transaction(1, 1, 0, 10, 100);
         tx.payload.clear();
 
-        assert_eq!(
-            pool.admit(tx),
-            Err(MempoolError::InvalidTransactionSize)
-        );
+        assert_eq!(pool.admit(tx), Err(MempoolError::InvalidTransactionSize));
     }
 
     #[test]
