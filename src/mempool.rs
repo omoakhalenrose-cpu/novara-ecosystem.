@@ -1,11 +1,10 @@
 //! NOVARA transaction mempool.
 //!
 //! Provides bounded pending-transaction storage, expiration,
-//! removal, statistics, and block-selection helpers.
+//! removal, statistics, and deterministic block selection.
 //!
 //! Transactions must be validated by the caller before admission.
-//! This module does not independently verify signatures, network
-//! identity, chain identity, balances, or account nonces.
+//! Expected account nonces must be supplied during block selection.
 
 use std::collections::BTreeMap;
 
@@ -129,8 +128,6 @@ impl Mempool {
     }
 
     /// Removes transactions that have reached their configured lifetime.
-    ///
-    /// Returns the number of expired transactions removed.
     pub fn expire(&mut self, current_time: u64) -> usize {
         let expired_ids: Vec<[u8; 32]> = self
             .transactions
@@ -179,58 +176,121 @@ impl Mempool {
         Some(transaction)
     }
 
-    /// Selects transactions for a candidate block.
+    /// Selects transactions using expected account nonces.
     ///
-    /// Higher fee-per-byte transactions receive priority.
-    /// Older transactions break equal-priority ties.
-    /// A sender limit prevents one sender from monopolising selection.
+    /// For each sender, selection starts at the expected nonce and
+    /// proceeds only through consecutive available nonces.
     ///
-    /// This method does not remove selected transactions.
-    /// Expected account nonces must be checked by the caller.
+    /// Transactions with stale nonces or gaps are not selected.
+    /// If multiple transactions share the same sender and nonce,
+    /// the transaction with the lowest ID is chosen deterministically.
+    ///
+    /// Senders are served in deterministic round-robin order.
+    /// Selection does not remove transactions from the mempool.
     pub fn select_for_block(
         &self,
         maximum_transactions: usize,
         current_time: u64,
+        expected_nonces: &BTreeMap<[u8; 32], u64>,
     ) -> Vec<PendingTransaction> {
-        let mut candidates: Vec<&PendingTransaction> = self.transactions.values().collect();
+        if maximum_transactions == 0 {
+            return Vec::new();
+        }
 
-        candidates.sort_by(|a, b| {
-            let a_size = a.size_bytes().max(1) as u128;
-            let b_size = b.size_bytes().max(1) as u128;
+        let mut sender_queues: BTreeMap<
+            [u8; 32],
+            BTreeMap<u64, PendingTransaction>,
+        > = BTreeMap::new();
 
-            let a_priority = a.fee.saturating_mul(b_size);
-            let b_priority = b.fee.saturating_mul(a_size);
+        for transaction in self.transactions.values() {
+            let age = current_time.saturating_sub(transaction.received_at);
 
-            b_priority
-                .cmp(&a_priority)
-                .then_with(|| {
-                    let a_age = current_time.saturating_sub(a.received_at);
-                    let b_age = current_time.saturating_sub(b.received_at);
-                    b_age.cmp(&a_age)
-                })
-                .then_with(|| a.id.cmp(&b.id))
-        });
-
-        let mut selected = Vec::new();
-        let mut selected_per_sender: BTreeMap<[u8; 32], usize> = BTreeMap::new();
-
-        for transaction in candidates {
-            if selected.len() >= maximum_transactions {
-                break;
-            }
-
-            let sender_count = selected_per_sender
-                .get(&transaction.sender)
-                .copied()
-                .unwrap_or(0);
-
-            if sender_count >= self.config.max_per_sender_per_block {
+            if age >= self.config.transaction_ttl {
                 continue;
             }
 
-            *selected_per_sender.entry(transaction.sender).or_insert(0) += 1;
+            let Some(expected_nonce) = expected_nonces.get(&transaction.sender) else {
+                continue;
+            };
 
-            selected.push(transaction.clone());
+            if transaction.nonce < *expected_nonce {
+                continue;
+            }
+
+            let nonce_queue = sender_queues
+                .entry(transaction.sender)
+                .or_default();
+
+            nonce_queue
+                .entry(transaction.nonce)
+                .or_insert_with(|| transaction.clone());
+        }
+
+        let mut eligible_queues: BTreeMap<
+            [u8; 32],
+            Vec<PendingTransaction>,
+        > = BTreeMap::new();
+
+        for (sender, nonce_queue) in sender_queues {
+            let Some(expected_nonce) = expected_nonces.get(&sender) else {
+                continue;
+            };
+
+            let mut next_nonce = *expected_nonce;
+            let mut queue = Vec::new();
+
+            while let Some(transaction) = nonce_queue.get(&next_nonce) {
+                queue.push(transaction.clone());
+
+                let Some(incremented_nonce) = next_nonce.checked_add(1) else {
+                    break;
+                };
+
+                next_nonce = incremented_nonce;
+            }
+
+            if !queue.is_empty() {
+                eligible_queues.insert(sender, queue);
+            }
+        }
+
+        let mut positions: BTreeMap<[u8; 32], usize> = BTreeMap::new();
+        let mut selected_per_sender: BTreeMap<[u8; 32], usize> = BTreeMap::new();
+        let mut selected = Vec::new();
+
+        while selected.len() < maximum_transactions {
+            let mut made_progress = false;
+
+            for (sender, queue) in &eligible_queues {
+                if selected.len() >= maximum_transactions {
+                    break;
+                }
+
+                let selected_count = selected_per_sender
+                    .get(sender)
+                    .copied()
+                    .unwrap_or(0);
+
+                if selected_count >= self.config.max_per_sender_per_block {
+                    continue;
+                }
+
+                let position = positions.get(sender).copied().unwrap_or(0);
+
+                if let Some(transaction) = queue.get(position) {
+                    selected.push(transaction.clone());
+
+                    positions.insert(*sender, position + 1);
+
+                    selected_per_sender.insert(*sender, selected_count + 1);
+
+                    made_progress = true;
+                }
+            }
+
+            if !made_progress {
+                break;
+            }
         }
 
         selected
@@ -280,6 +340,10 @@ mod tests {
             received_at,
             payload: vec![1, 2, 3, 4],
         }
+    }
+
+    fn expected_nonce(sender: u8, nonce: u64) -> BTreeMap<[u8; 32], u64> {
+        BTreeMap::from([([sender; 32], nonce)])
     }
 
     #[test]
@@ -375,45 +439,113 @@ mod tests {
     }
 
     #[test]
-    fn higher_fee_per_byte_gets_priority() {
+    fn selects_consecutive_nonces_in_order() {
         let mut pool = Mempool::new(MempoolConfig::default());
 
-        let low_fee = PendingTransaction {
-            fee: 10,
-            ..transaction(1, 1, 0, 10, 100)
-        };
+        assert!(pool.admit(transaction(1, 1, 5, 10, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 6, 10, 100)).is_ok());
+        assert!(pool.admit(transaction(3, 1, 7, 10, 100)).is_ok());
 
-        let high_fee = PendingTransaction {
-            fee: 100,
-            ..transaction(2, 2, 0, 100, 100)
-        };
+        let nonces = expected_nonce(1, 5);
+        let selected = pool.select_for_block(10, 100, &nonces);
 
-        assert!(pool.admit(low_fee).is_ok());
-        assert!(pool.admit(high_fee).is_ok());
-
-        let selected = pool.select_for_block(1, 100);
-
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].id, [2; 32]);
+        assert_eq!(
+            selected.iter().map(|tx| tx.nonce).collect::<Vec<_>>(),
+            vec![5, 6, 7]
+        );
     }
 
     #[test]
-    fn sender_cannot_monopolise_block_selection() {
-        let config = MempoolConfig {
-            max_per_sender_per_block: 1,
-            ..MempoolConfig::default()
-        };
+    fn does_not_select_stale_nonces() {
+        let mut pool = Mempool::new(MempoolConfig::default());
 
-        let mut pool = Mempool::new(config);
+        assert!(pool.admit(transaction(1, 1, 4, 10, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 5, 10, 100)).is_ok());
+
+        let nonces = expected_nonce(1, 5);
+        let selected = pool.select_for_block(10, 100, &nonces);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].nonce, 5);
+    }
+
+    #[test]
+    fn does_not_skip_missing_nonce() {
+        let mut pool = Mempool::new(MempoolConfig::default());
+
+        assert!(pool.admit(transaction(1, 1, 5, 10, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 7, 10, 100)).is_ok());
+
+        let nonces = expected_nonce(1, 5);
+        let selected = pool.select_for_block(10, 100, &nonces);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].nonce, 5);
+    }
+
+    #[test]
+    fn does_not_select_transactions_without_expected_nonce() {
+        let mut pool = Mempool::new(MempoolConfig::default());
+
+        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
+
+        let selected = pool.select_for_block(10, 100, &BTreeMap::new());
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn duplicate_sender_nonce_uses_lowest_id() {
+        let mut pool = Mempool::new(MempoolConfig::default());
+
+        assert!(pool.admit(transaction(2, 1, 5, 100, 100)).is_ok());
+        assert!(pool.admit(transaction(1, 1, 5, 10, 100)).is_ok());
+
+        let nonces = expected_nonce(1, 5);
+        let selected = pool.select_for_block(10, 100, &nonces);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, [1; 32]);
+    }
+
+    #[test]
+    fn senders_receive_round_robin_selection() {
+        let mut pool = Mempool::new(MempoolConfig::default());
 
         assert!(pool.admit(transaction(1, 1, 0, 100, 100)).is_ok());
-        assert!(pool.admit(transaction(2, 1, 1, 90, 100)).is_ok());
-        assert!(pool.admit(transaction(3, 2, 0, 80, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 1, 100, 100)).is_ok());
+        assert!(pool.admit(transaction(3, 2, 0, 100, 100)).is_ok());
+        assert!(pool.admit(transaction(4, 2, 1, 100, 100)).is_ok());
 
-        let selected = pool.select_for_block(3, 100);
+        let mut nonces = BTreeMap::new();
+        nonces.insert([1; 32], 0);
+        nonces.insert([2; 32], 0);
 
-        assert_eq!(selected.len(), 2);
-        assert_ne!(selected[0].sender, selected[1].sender);
+        let selected = pool.select_for_block(4, 100, &nonces);
+
+        assert_eq!(selected.len(), 4);
+        assert_eq!(selected[0].sender, [1; 32]);
+        assert_eq!(selected[1].sender, [2; 32]);
+        assert_eq!(selected[2].sender, [1; 32]);
+        assert_eq!(selected[3].sender, [2; 32]);
+    }
+
+    #[test]
+    fn selection_is_deterministic() {
+        let mut pool = Mempool::new(MempoolConfig::default());
+
+        assert!(pool.admit(transaction(1, 1, 0, 100, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 1, 100, 100)).is_ok());
+        assert!(pool.admit(transaction(3, 2, 0, 100, 100)).is_ok());
+
+        let mut nonces = BTreeMap::new();
+        nonces.insert([1; 32], 0);
+        nonces.insert([2; 32], 0);
+
+        let first = pool.select_for_block(10, 100, &nonces);
+        let second = pool.select_for_block(10, 100, &nonces);
+
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -424,9 +556,46 @@ mod tests {
 
         assert!(pool.admit(tx).is_ok());
 
-        let _ = pool.select_for_block(10, 100);
+        let nonces = expected_nonce(1, 0);
+        let _ = pool.select_for_block(10, 100, &nonces);
 
         assert!(pool.contains(&id));
         assert_eq!(pool.stats().transaction_count, 1);
+    }
+
+    #[test]
+    fn respects_per_sender_block_limit() {
+        let config = MempoolConfig {
+            max_per_sender_per_block: 1,
+            ..MempoolConfig::default()
+        };
+
+        let mut pool = Mempool::new(config);
+
+        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
+        assert!(pool.admit(transaction(2, 1, 1, 10, 100)).is_ok());
+
+        let nonces = expected_nonce(1, 0);
+        let selected = pool.select_for_block(10, 100, &nonces);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].nonce, 0);
+    }
+
+    #[test]
+    fn does_not_select_expired_transactions() {
+        let config = MempoolConfig {
+            transaction_ttl: 10,
+            ..MempoolConfig::default()
+        };
+
+        let mut pool = Mempool::new(config);
+
+        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
+
+        let nonces = expected_nonce(1, 0);
+        let selected = pool.select_for_block(10, 110, &nonces);
+
+        assert!(selected.is_empty());
     }
 }
