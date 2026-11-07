@@ -2,6 +2,21 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
 
+// NOVARA Mempool Intelligence 0.3.0
+//
+// Scheduling policy:
+// - Consecutive nonces are mandatory.
+// - Senders receive one transaction per scheduling round.
+// - Older transactions receive higher priority.
+// - Fees have a capped influence.
+// - Identical inputs produce identical selections.
+//
+// This is a block-proposer scheduling policy.
+// It does not replace transaction validation or consensus.
+
+const AGE_PRIORITY_MULTIPLIER: u128 = 4;
+const MAX_FEE_PRIORITY: u128 = 1_000;
+
 #[derive(Debug, Clone)]
 pub struct MempoolConfig {
     pub max_transactions: usize,
@@ -42,6 +57,13 @@ impl PendingTransaction {
 
     pub fn is_expired(&self, current_time: u64, ttl: u64) -> bool {
         current_time.saturating_sub(self.received_at) >= ttl
+    }
+
+    fn scheduling_priority(&self, current_time: u64) -> u128 {
+        let waiting_time = current_time.saturating_sub(self.received_at) as u128;
+        let age_priority = waiting_time.saturating_mul(AGE_PRIORITY_MULTIPLIER);
+        let fee_priority = self.fee.min(MAX_FEE_PRIORITY);
+        age_priority.saturating_add(fee_priority)
     }
 }
 
@@ -101,7 +123,10 @@ impl Mempool {
         }
     }
 
-    pub fn admit(&mut self, transaction: PendingTransaction) -> Result<(), MempoolError> {
+    pub fn admit(
+        &mut self,
+        transaction: PendingTransaction,
+    ) -> Result<(), MempoolError> {
         if transaction.payload.is_empty() {
             return Err(MempoolError::InvalidTransactionSize);
         }
@@ -138,7 +163,11 @@ impl Mempool {
         }
 
         self.total_bytes = new_total;
-        *self.sender_counts.entry(transaction.sender).or_insert(0) += 1;
+
+        *self.sender_counts
+            .entry(transaction.sender)
+            .or_insert(0) += 1;
+
         self.transactions.insert(transaction.id, transaction);
 
         Ok(())
@@ -164,7 +193,12 @@ impl Mempool {
         let expired_ids: Vec<[u8; 32]> = self
             .transactions
             .values()
-            .filter(|transaction| transaction.is_expired(current_time, self.config.transaction_ttl))
+            .filter(|transaction| {
+                transaction.is_expired(
+                    current_time,
+                    self.config.transaction_ttl,
+                )
+            })
             .map(|transaction| transaction.id)
             .collect();
 
@@ -207,15 +241,23 @@ impl Mempool {
             return Vec::new();
         }
 
-        let mut sender_queues: BTreeMap<[u8; 32], BTreeMap<u64, PendingTransaction>> =
-            BTreeMap::new();
+        let mut sender_queues: BTreeMap<
+            [u8; 32],
+            BTreeMap<u64, PendingTransaction>,
+        > = BTreeMap::new();
 
+        // Build nonce-indexed queues.
         for transaction in self.transactions.values() {
-            if transaction.is_expired(current_time, self.config.transaction_ttl) {
+            if transaction.is_expired(
+                current_time,
+                self.config.transaction_ttl,
+            ) {
                 continue;
             }
 
-            let Some(expected_nonce) = expected_nonces.get(&transaction.sender) else {
+            let Some(expected_nonce) =
+                expected_nonces.get(&transaction.sender)
+            else {
                 continue;
             };
 
@@ -223,17 +265,26 @@ impl Mempool {
                 continue;
             }
 
-            let nonce_queue = sender_queues.entry(transaction.sender).or_default();
+            let nonce_queue =
+                sender_queues.entry(transaction.sender).or_default();
 
+            // Resolve duplicate sender/nonce entries deterministically.
             match nonce_queue.get(&transaction.nonce) {
                 Some(existing) if existing.id <= transaction.id => {}
                 _ => {
-                    nonce_queue.insert(transaction.nonce, transaction.clone());
+                    nonce_queue.insert(
+                        transaction.nonce,
+                        transaction.clone(),
+                    );
                 }
             }
         }
 
-        let mut eligible_queues: BTreeMap<[u8; 32], Vec<PendingTransaction>> = BTreeMap::new();
+        // Keep only consecutive transactions for each sender.
+        let mut eligible_queues: BTreeMap<
+            [u8; 32],
+            Vec<PendingTransaction>,
+        > = BTreeMap::new();
 
         for (sender, nonce_queue) in sender_queues {
             let Some(expected_nonce) = expected_nonces.get(&sender) else {
@@ -246,7 +297,8 @@ impl Mempool {
             while let Some(transaction) = nonce_queue.get(&next_nonce) {
                 eligible.push(transaction.clone());
 
-                let Some(incremented_nonce) = next_nonce.checked_add(1) else {
+                let Some(incremented_nonce) = next_nonce.checked_add(1)
+                else {
                     break;
                 };
 
@@ -259,35 +311,72 @@ impl Mempool {
         }
 
         let mut selected = Vec::new();
-        let mut selected_per_sender: HashMap<[u8; 32], usize> = HashMap::new();
+        let mut selected_per_sender: HashMap<[u8; 32], usize> =
+            HashMap::new();
 
+        // Each round gives every eligible sender one opportunity.
+        // Within a round, older transactions receive higher priority.
+        // Fees have a capped influence.
         while selected.len() < maximum_transactions {
-            let mut made_progress = false;
+            let mut candidates: Vec<(
+                [u8; 32],
+                PendingTransaction,
+                u128,
+            )> = eligible_queues
+                .iter()
+                .filter_map(|(sender, queue)| {
+                    if queue.is_empty() {
+                        return None;
+                    }
 
-            for (sender, queue) in eligible_queues.iter_mut() {
+                    let selected_count = selected_per_sender
+                        .get(sender)
+                        .copied()
+                        .unwrap_or(0);
+
+                    if selected_count
+                        >= self.config.max_per_sender_per_block
+                    {
+                        return None;
+                    }
+
+                    let transaction = queue.first()?.clone();
+                    let priority =
+                        transaction.scheduling_priority(current_time);
+
+                    Some((*sender, transaction, priority))
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                break;
+            }
+
+            // Higher priority first. Sender ID breaks ties deterministically.
+            candidates.sort_by(|left, right| {
+                right
+                    .2
+                    .cmp(&left.2)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+
+            for (sender, transaction, _) in candidates {
                 if selected.len() >= maximum_transactions {
                     break;
                 }
 
-                let selected_count = selected_per_sender.get(sender).copied().unwrap_or(0);
-
-                if selected_count >= self.config.max_per_sender_per_block {
+                let Some(queue) = eligible_queues.get_mut(&sender) else {
                     continue;
-                }
+                };
 
                 if queue.is_empty() {
                     continue;
                 }
 
-                let transaction = queue.remove(0);
+                queue.remove(0);
                 selected.push(transaction);
 
-                *selected_per_sender.entry(*sender).or_insert(0) += 1;
-                made_progress = true;
-            }
-
-            if !made_progress {
-                break;
+                *selected_per_sender.entry(sender).or_insert(0) += 1;
             }
         }
 
@@ -299,7 +388,12 @@ impl Mempool {
 mod tests {
     use super::*;
 
-    fn test_transaction(id: u8, sender: u8, nonce: u64, received_at: u64) -> PendingTransaction {
+    fn test_transaction(
+        id: u8,
+        sender: u8,
+        nonce: u64,
+        received_at: u64,
+    ) -> PendingTransaction {
         PendingTransaction {
             id: [id; 32],
             sender: [sender; 32],
@@ -335,7 +429,8 @@ mod tests {
         let mut mempool = Mempool::new(test_config());
         let transaction = test_transaction(1, 1, 0, 10);
 
-        assert!(mempool.admit(transaction.clone()).is_ok());
+        mempool.admit(transaction.clone()).unwrap();
+
         assert_eq!(
             mempool.admit(transaction),
             Err(MempoolError::DuplicateTransaction)
@@ -346,11 +441,25 @@ mod tests {
     fn rejects_empty_payload() {
         let mut mempool = Mempool::new(test_config());
         let mut transaction = test_transaction(1, 1, 0, 10);
+
         transaction.payload.clear();
 
         assert_eq!(
             mempool.admit(transaction),
             Err(MempoolError::InvalidTransactionSize)
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_transaction() {
+        let mut mempool = Mempool::new(test_config());
+        let mut transaction = test_transaction(1, 1, 0, 10);
+
+        transaction.payload = vec![0; 1_001];
+
+        assert_eq!(
+            mempool.admit(transaction),
+            Err(MempoolError::TransactionTooLarge)
         );
     }
 
@@ -361,7 +470,7 @@ mod tests {
 
         let mut mempool = Mempool::new(config);
 
-        assert!(mempool.admit(test_transaction(1, 1, 0, 10)).is_ok());
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         assert_eq!(
             mempool.admit(test_transaction(2, 1, 1, 10)),
@@ -376,7 +485,22 @@ mod tests {
 
         let mut mempool = Mempool::new(config);
 
-        assert!(mempool.admit(test_transaction(1, 1, 0, 10)).is_ok());
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+
+        assert_eq!(
+            mempool.admit(test_transaction(2, 2, 0, 10)),
+            Err(MempoolError::MempoolFull)
+        );
+    }
+
+    #[test]
+    fn enforces_total_byte_limit() {
+        let mut config = test_config();
+        config.max_total_bytes = 3;
+
+        let mut mempool = Mempool::new(config);
+
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         assert_eq!(
             mempool.admit(test_transaction(2, 2, 0, 10)),
@@ -387,11 +511,10 @@ mod tests {
     #[test]
     fn expires_old_transactions() {
         let mut mempool = Mempool::new(test_config());
+
         mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
-        let expired = mempool.expire(111);
-
-        assert_eq!(expired, 1);
+        assert_eq!(mempool.expire(111), 1);
         assert!(mempool.is_empty());
     }
 
@@ -461,10 +584,11 @@ mod tests {
     #[test]
     fn excludes_senders_without_expected_nonce() {
         let mut mempool = Mempool::new(test_config());
+
         mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
-        let expected = HashMap::new();
-        let selected = mempool.select_for_block(10, 20, &expected);
+        let selected =
+            mempool.select_for_block(10, 20, &HashMap::new());
 
         assert!(selected.is_empty());
     }
@@ -505,6 +629,75 @@ mod tests {
         assert_eq!(selected[1].sender, [2; 32]);
         assert_eq!(selected[2].sender, [1; 32]);
         assert_eq!(selected[3].sender, [2; 32]);
+    }
+
+    #[test]
+    fn older_transaction_receives_higher_priority() {
+        let mut mempool = Mempool::new(test_config());
+
+        let mut older = test_transaction(1, 1, 0, 10);
+        let mut newer = test_transaction(2, 2, 0, 90);
+
+        older.fee = 0;
+        newer.fee = MAX_FEE_PRIORITY;
+
+        mempool.admit(older).unwrap();
+        mempool.admit(newer).unwrap();
+
+        let mut expected = HashMap::new();
+        expected.insert([1; 32], 0);
+        expected.insert([2; 32], 0);
+
+        let selected = mempool.select_for_block(1, 100, &expected);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, [1; 32]);
+    }
+
+    #[test]
+    fn fee_priority_is_capped() {
+        let mut mempool = Mempool::new(test_config());
+
+        let mut normal_fee = test_transaction(1, 1, 0, 90);
+        let mut extreme_fee = test_transaction(2, 2, 0, 90);
+
+        normal_fee.fee = MAX_FEE_PRIORITY;
+        extreme_fee.fee = u128::MAX;
+
+        mempool.admit(normal_fee).unwrap();
+        mempool.admit(extreme_fee).unwrap();
+
+        let mut expected = HashMap::new();
+        expected.insert([1; 32], 0);
+        expected.insert([2; 32], 0);
+
+        let selected = mempool.select_for_block(2, 100, &expected);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].id, [1; 32]);
+        assert_eq!(selected[1].id, [2; 32]);
+    }
+
+    #[test]
+    fn fee_cannot_override_sufficient_age_advantage() {
+        let mut mempool = Mempool::new(test_config());
+
+        let mut older = test_transaction(1, 1, 0, 10);
+        let mut newer = test_transaction(2, 2, 0, 260);
+
+        older.fee = 0;
+        newer.fee = u128::MAX;
+
+        mempool.admit(older).unwrap();
+        mempool.admit(newer).unwrap();
+
+        let mut expected = HashMap::new();
+        expected.insert([1; 32], 0);
+        expected.insert([2; 32], 0);
+
+        let selected = mempool.select_for_block(1, 300, &expected);
+
+        assert_eq!(selected[0].id, [1; 32]);
     }
 
     #[test]
@@ -561,6 +754,7 @@ mod tests {
     #[test]
     fn excludes_expired_transactions_during_selection() {
         let mut mempool = Mempool::new(test_config());
+
         mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         let mut expected = HashMap::new();
@@ -569,5 +763,42 @@ mod tests {
         let selected = mempool.select_for_block(10, 111, &expected);
 
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn handles_extreme_fee_without_overflow() {
+        let mut transaction = test_transaction(1, 1, 0, 10);
+
+        transaction.fee = u128::MAX;
+
+        assert_eq!(transaction.scheduling_priority(20), 1_040);
+    }
+
+    #[test]
+    fn handles_future_received_timestamp_safely() {
+        let transaction = test_transaction(1, 1, 0, 100);
+
+        assert_eq!(transaction.scheduling_priority(50), 100);
+    }
+
+    #[test]
+    fn enforces_per_sender_limit_across_scheduling_rounds() {
+        let mut config = test_config();
+        config.max_per_sender_per_block = 2;
+
+        let mut mempool = Mempool::new(config);
+
+        for nonce in 0..4 {
+            mempool
+                .admit(test_transaction(nonce as u8 + 1, 1, nonce, 10))
+                .unwrap();
+        }
+
+        let mut expected = HashMap::new();
+        expected.insert([1; 32], 0);
+
+        let selected = mempool.select_for_block(10, 20, &expected);
+
+        assert_eq!(selected.len(), 2);
     }
 }
