@@ -88,10 +88,7 @@ impl Mempool {
     }
 
     /// Adds a transaction after caller-side validation.
-    pub fn admit(
-        &mut self,
-        transaction: PendingTransaction,
-    ) -> Result<(), MempoolError> {
+    pub fn admit(&mut self, transaction: PendingTransaction) -> Result<(), MempoolError> {
         let size = transaction.size_bytes();
 
         if size == 0 {
@@ -124,10 +121,7 @@ impl Mempool {
 
         self.total_bytes += size;
 
-        *self
-            .sender_counts
-            .entry(transaction.sender)
-            .or_insert(0) += 1;
+        *self.sender_counts.entry(transaction.sender).or_insert(0) += 1;
 
         self.transactions.insert(transaction.id, transaction);
 
@@ -189,7 +183,7 @@ impl Mempool {
     ///
     /// Higher fee-per-byte transactions receive priority.
     /// Older transactions break equal-priority ties.
-    /// The sender limit prevents one sender from monopolising selection.
+    /// A sender limit prevents one sender from monopolising selection.
     ///
     /// This method does not remove selected transactions.
     /// Expected account nonces must be checked by the caller.
