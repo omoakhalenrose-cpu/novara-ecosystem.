@@ -178,14 +178,13 @@ impl Mempool {
 
     /// Selects transactions using expected account nonces.
     ///
-    /// For each sender, selection starts at the expected nonce and
-    /// proceeds only through consecutive available nonces.
+    /// Selection starts at each sender's expected nonce and proceeds
+    /// only through consecutive available nonces.
     ///
-    /// Transactions with stale nonces or gaps are not selected.
-    /// If multiple transactions share the same sender and nonce,
-    /// the transaction with the lowest ID is chosen deterministically.
+    /// Stale transactions and transactions across nonce gaps are excluded.
+    /// Duplicate sender nonces are resolved using the lowest transaction ID.
     ///
-    /// Senders are served in deterministic round-robin order.
+    /// Senders receive deterministic round-robin selection.
     /// Selection does not remove transactions from the mempool.
     pub fn select_for_block(
         &self,
@@ -197,10 +196,8 @@ impl Mempool {
             return Vec::new();
         }
 
-        let mut sender_queues: BTreeMap<
-            [u8; 32],
-            BTreeMap<u64, PendingTransaction>,
-        > = BTreeMap::new();
+        let mut sender_queues: BTreeMap<[u8; 32], BTreeMap<u64, PendingTransaction>> =
+            BTreeMap::new();
 
         for transaction in self.transactions.values() {
             let age = current_time.saturating_sub(transaction.received_at);
@@ -217,19 +214,15 @@ impl Mempool {
                 continue;
             }
 
-            let nonce_queue = sender_queues
-                .entry(transaction.sender)
-                .or_default();
+            let nonce_queue = sender_queues.entry(transaction.sender).or_default();
 
             nonce_queue
                 .entry(transaction.nonce)
                 .or_insert_with(|| transaction.clone());
         }
 
-        let mut eligible_queues: BTreeMap<
-            [u8; 32],
-            Vec<PendingTransaction>,
-        > = BTreeMap::new();
+        let mut eligible_queues: BTreeMap<[u8; 32], Vec<PendingTransaction>> =
+            BTreeMap::new();
 
         for (sender, nonce_queue) in sender_queues {
             let Some(expected_nonce) = expected_nonces.get(&sender) else {
@@ -266,10 +259,7 @@ impl Mempool {
                     break;
                 }
 
-                let selected_count = selected_per_sender
-                    .get(sender)
-                    .copied()
-                    .unwrap_or(0);
+                let selected_count = selected_per_sender.get(sender).copied().unwrap_or(0);
 
                 if selected_count >= self.config.max_per_sender_per_block {
                     continue;
