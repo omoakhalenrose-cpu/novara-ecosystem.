@@ -142,7 +142,6 @@ impl Mempool {
 
         self.total_bytes = new_total;
         *self.sender_counts.entry(transaction.sender).or_insert(0) += 1;
-
         self.transactions.insert(transaction.id, transaction);
 
         Ok(())
@@ -286,11 +285,9 @@ impl Mempool {
                 }
 
                 let transaction = queue.remove(0);
-
                 selected.push(transaction);
 
                 *selected_per_sender.entry(*sender).or_insert(0) += 1;
-
                 made_progress = true;
             }
 
@@ -337,7 +334,6 @@ mod tests {
     #[test]
     fn admits_transaction() {
         let mut mempool = Mempool::new(test_config());
-
         let transaction = test_transaction(1, 1, 0, 10);
 
         assert!(mempool.admit(transaction.clone()).is_ok());
@@ -347,7 +343,6 @@ mod tests {
     #[test]
     fn rejects_duplicate_transaction() {
         let mut mempool = Mempool::new(test_config());
-
         let transaction = test_transaction(1, 1, 0, 10);
 
         assert!(mempool.admit(transaction.clone()).is_ok());
@@ -360,7 +355,6 @@ mod tests {
     #[test]
     fn rejects_empty_payload() {
         let mut mempool = Mempool::new(test_config());
-
         let mut transaction = test_transaction(1, 1, 0, 10);
         transaction.payload.clear();
 
@@ -403,10 +397,7 @@ mod tests {
     #[test]
     fn expires_old_transactions() {
         let mut mempool = Mempool::new(test_config());
-
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         let expired = mempool.expire(111);
 
@@ -417,7 +408,6 @@ mod tests {
     #[test]
     fn removes_transaction() {
         let mut mempool = Mempool::new(test_config());
-
         let transaction = test_transaction(1, 1, 0, 10);
         let id = transaction.id;
 
@@ -431,17 +421,9 @@ mod tests {
     fn selects_consecutive_nonces() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(2, 1, 1, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(3, 1, 2, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(2, 1, 1, 10)).unwrap();
+        mempool.admit(test_transaction(3, 1, 2, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -458,13 +440,8 @@ mod tests {
     fn excludes_stale_nonces() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(2, 1, 1, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(2, 1, 1, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 1);
@@ -479,13 +456,8 @@ mod tests {
     fn nonce_gap_blocks_later_transactions() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(3, 1, 2, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(3, 1, 2, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -499,13 +471,9 @@ mod tests {
     #[test]
     fn excludes_senders_without_expected_nonce() {
         let mut mempool = Mempool::new(test_config());
-
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         let expected = HashMap::new();
-
         let selected = mempool.select_for_block(10, 20, &expected);
 
         assert!(selected.is_empty());
@@ -515,13 +483,8 @@ mod tests {
     fn duplicate_sender_nonce_selection_is_deterministic() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(2, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
+        mempool.admit(test_transaction(2, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -536,21 +499,10 @@ mod tests {
     fn schedules_senders_round_robin() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(2, 1, 1, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(3, 2, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(4, 2, 1, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(2, 1, 1, 10)).unwrap();
+        mempool.admit(test_transaction(3, 2, 0, 10)).unwrap();
+        mempool.admit(test_transaction(4, 2, 1, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -569,13 +521,8 @@ mod tests {
     fn selection_is_deterministic() {
         let mut mempool = Mempool::new(test_config());
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(2, 2, 0, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(2, 2, 0, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -590,7 +537,6 @@ mod tests {
     #[test]
     fn selection_does_not_remove_transactions() {
         let mut mempool = Mempool::new(test_config());
-
         let transaction = test_transaction(1, 1, 0, 10);
         let id = transaction.id;
 
@@ -611,13 +557,8 @@ mod tests {
 
         let mut mempool = Mempool::new(config);
 
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
-
-        mempool
-            .admit(test_transaction(2, 1, 1, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
+        mempool.admit(test_transaction(2, 1, 1, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
@@ -630,10 +571,7 @@ mod tests {
     #[test]
     fn excludes_expired_transactions_during_selection() {
         let mut mempool = Mempool::new(test_config());
-
-        mempool
-            .admit(test_transaction(1, 1, 0, 10))
-            .unwrap();
+        mempool.admit(test_transaction(1, 1, 0, 10)).unwrap();
 
         let mut expected = HashMap::new();
         expected.insert([1; 32], 0);
