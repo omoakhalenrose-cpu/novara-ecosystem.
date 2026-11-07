@@ -282,13 +282,9 @@ fn pending_amount(
     asset_id: &AssetId,
     outgoing: bool,
 ) -> Result<u128, MempoolError> {
-    let Some(queue) = inner.senders.get(account.as_bytes()) else {
-        return Ok(0);
-    };
-    queue.values().try_fold(0u128, |total, id| {
-        let Some(signed) = inner.transactions.get(id) else {
-            return Ok(total);
-        };
+    // Sender queues are indexed by sender, so recipient lookups must scan all
+    // pending transactions to account for incoming funds from every sender.
+    inner.transactions.values().try_fold(0u128, |total, signed| {
         let transaction = &signed.transaction;
         let applies = if outgoing {
             transaction.sender == account && transaction.recipient != account
@@ -446,6 +442,62 @@ mod tests {
         // unconfirmed incoming transfer cannot be spent by its own transaction.
         let outgoing = signed(&recipient_identity, recipient, f.recipient, f.context, 1, 0);
         assert_eq!(mempool.submit(outgoing, &state), Err(MempoolError::InsufficientBalance));
+    }
+
+    #[test]
+    fn incoming_from_multiple_senders_is_not_spendable() {
+        let network = NetworkId::Development;
+        let first_identity = Ed25519Identity::generate();
+        let second_identity = Ed25519Identity::generate();
+        let recipient_identity = Ed25519Identity::generate();
+        let first_sender = AccountId::try_from_ed25519_public_key(network, &first_identity.public_key()).unwrap();
+        let second_sender = AccountId::try_from_ed25519_public_key(network, &second_identity.public_key()).unwrap();
+        let recipient = AccountId::try_from_ed25519_public_key(network, &recipient_identity.public_key()).unwrap();
+        let genesis = InitializedGenesis::new(GenesisConfig::new(
+            network,
+            vec![
+                GenesisAllocation { account_id: first_sender, asset_id: ASSET, amount: 100 },
+                GenesisAllocation { account_id: second_sender, asset_id: ASSET, amount: 100 },
+                GenesisAllocation { account_id: recipient, asset_id: ASSET, amount: 1 },
+            ],
+        )).unwrap();
+        let state = State::from_genesis(&genesis).unwrap();
+        let context = ValidationContext { network, chain_id: genesis.chain_id() };
+        let mempool = pool(context, CAPACITY);
+
+        mempool.submit(signed(&first_identity, first_sender, recipient, context, 50, 0), &state).unwrap();
+        mempool.submit(signed(&second_identity, second_sender, recipient, context, 50, 0), &state).unwrap();
+
+        let outgoing = signed(&recipient_identity, recipient, first_sender, context, 2, 0);
+        assert_eq!(mempool.submit(outgoing, &state), Err(MempoolError::InsufficientBalance));
+    }
+
+    #[test]
+    fn cumulative_incoming_from_multiple_senders_cannot_overflow_balance() {
+        let network = NetworkId::Development;
+        let first_identity = Ed25519Identity::generate();
+        let second_identity = Ed25519Identity::generate();
+        let recipient_identity = Ed25519Identity::generate();
+        let first_sender = AccountId::try_from_ed25519_public_key(network, &first_identity.public_key()).unwrap();
+        let second_sender = AccountId::try_from_ed25519_public_key(network, &second_identity.public_key()).unwrap();
+        let recipient = AccountId::try_from_ed25519_public_key(network, &recipient_identity.public_key()).unwrap();
+        let genesis = InitializedGenesis::new(GenesisConfig::new(
+            network,
+            vec![
+                GenesisAllocation { account_id: first_sender, asset_id: ASSET, amount: 100 },
+                GenesisAllocation { account_id: second_sender, asset_id: ASSET, amount: 100 },
+                GenesisAllocation { account_id: recipient, asset_id: ASSET, amount: u128::MAX - 100 },
+            ],
+        )).unwrap();
+        let state = State::from_genesis(&genesis).unwrap();
+        let context = ValidationContext { network, chain_id: genesis.chain_id() };
+        let mempool = pool(context, CAPACITY);
+
+        mempool.submit(signed(&first_identity, first_sender, recipient, context, 60, 0), &state).unwrap();
+        assert_eq!(
+            mempool.submit(signed(&second_identity, second_sender, recipient, context, 50, 0), &state),
+            Err(MempoolError::BalanceOverflow)
+        );
     }
 
     #[test]
