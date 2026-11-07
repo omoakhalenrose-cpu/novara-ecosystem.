@@ -101,10 +101,7 @@ impl Mempool {
         }
     }
 
-    pub fn admit(
-        &mut self,
-        transaction: PendingTransaction,
-    ) -> Result<(), MempoolError> {
+    pub fn admit(&mut self, transaction: PendingTransaction) -> Result<(), MempoolError> {
         if transaction.payload.is_empty() {
             return Err(MempoolError::InvalidTransactionSize);
         }
@@ -167,9 +164,7 @@ impl Mempool {
         let expired_ids: Vec<[u8; 32]> = self
             .transactions
             .values()
-            .filter(|transaction| {
-                transaction.is_expired(current_time, self.config.transaction_ttl)
-            })
+            .filter(|transaction| transaction.is_expired(current_time, self.config.transaction_ttl))
             .map(|transaction| transaction.id)
             .collect();
 
@@ -304,12 +299,7 @@ impl Mempool {
 mod tests {
     use super::*;
 
-    fn test_transaction(
-        id: u8,
-        sender: u8,
-        nonce: u64,
-        received_at: u64,
-    ) -> PendingTransaction {
+    fn test_transaction(id: u8, sender: u8, nonce: u64, received_at: u64) -> PendingTransaction {
         PendingTransaction {
             id: [id; 32],
             sender: [sender; 32],
