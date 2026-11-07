@@ -317,10 +317,7 @@ impl Mempool {
                         return None;
                     }
 
-                    let selected_count = selected_per_sender
-                        .get(sender)
-                        .copied()
-                        .unwrap_or(0);
+                    let selected_count = selected_per_sender.get(sender).copied().unwrap_or(0);
 
                     if selected_count >= self.config.max_per_sender_per_block {
                         return None;
