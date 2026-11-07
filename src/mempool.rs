@@ -123,10 +123,7 @@ impl Mempool {
         }
     }
 
-    pub fn admit(
-        &mut self,
-        transaction: PendingTransaction,
-    ) -> Result<(), MempoolError> {
+    pub fn admit(&mut self, transaction: PendingTransaction) -> Result<(), MempoolError> {
         if transaction.payload.is_empty() {
             return Err(MempoolError::InvalidTransactionSize);
         }
@@ -194,10 +191,7 @@ impl Mempool {
             .transactions
             .values()
             .filter(|transaction| {
-                transaction.is_expired(
-                    current_time,
-                    self.config.transaction_ttl,
-                )
+                transaction.is_expired(current_time, self.config.transaction_ttl)
             })
             .map(|transaction| transaction.id)
             .collect();
@@ -266,10 +260,7 @@ impl Mempool {
             match nonce_queue.get(&transaction.nonce) {
                 Some(existing) if existing.id <= transaction.id => {}
                 _ => {
-                    nonce_queue.insert(
-                        transaction.nonce,
-                        transaction.clone(),
-                    );
+                    nonce_queue.insert(transaction.nonce, transaction.clone());
                 }
             }
         }
@@ -289,8 +280,7 @@ impl Mempool {
             while let Some(transaction) = nonce_queue.get(&next_nonce) {
                 eligible.push(transaction.clone());
 
-                let Some(incremented_nonce) = next_nonce.checked_add(1)
-                else {
+                let Some(incremented_nonce) = next_nonce.checked_add(1) else {
                     break;
                 };
 
@@ -303,8 +293,7 @@ impl Mempool {
         }
 
         let mut selected = Vec::new();
-        let mut selected_per_sender: HashMap<[u8; 32], usize> =
-            HashMap::new();
+        let mut selected_per_sender: HashMap<[u8; 32], usize> = HashMap::new();
 
         // Each round gives every eligible sender one opportunity.
         // Within a round, older transactions receive higher priority.
@@ -317,7 +306,10 @@ impl Mempool {
                         return None;
                     }
 
-                    let selected_count = selected_per_sender.get(sender).copied().unwrap_or(0);
+                    let selected_count = selected_per_sender
+                        .get(sender)
+                        .copied()
+                        .unwrap_or(0);
 
                     if selected_count >= self.config.max_per_sender_per_block {
                         return None;
@@ -335,8 +327,12 @@ impl Mempool {
             }
 
             // Higher priority first. Sender ID breaks ties deterministically.
-            candidates
-                .sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
+            candidates.sort_by(|left, right| {
+                right
+                    .2
+                    .cmp(&left.2)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
 
             for (sender, transaction, _) in candidates {
                 if selected.len() >= maximum_transactions {
@@ -366,7 +362,12 @@ impl Mempool {
 mod tests {
     use super::*;
 
-    fn test_transaction(id: u8, sender: u8, nonce: u64, received_at: u64) -> PendingTransaction {
+    fn test_transaction(
+        id: u8,
+        sender: u8,
+        nonce: u64,
+        received_at: u64,
+    ) -> PendingTransaction {
         PendingTransaction {
             id: [id; 32],
             sender: [sender; 32],
