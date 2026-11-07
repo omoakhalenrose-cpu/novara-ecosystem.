@@ -7,6 +7,7 @@ pub mod block;
 pub mod chain;
 pub mod crypto;
 pub mod genesis;
+pub mod mempool;
 pub mod state;
 pub mod storage;
 pub mod transaction;
