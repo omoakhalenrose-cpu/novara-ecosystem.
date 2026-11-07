@@ -1,14 +1,16 @@
-//! NOVARA Mempool
+//! NOVARA transaction mempool.
 //!
-//! Manages pending transactions before block inclusion.
-//! This module is intentionally independent of consensus.
+//! This module provides bounded pending-transaction storage,
+//! expiration, removal, statistics, and block-selection helpers.
 //!
-//! All time values are supplied by the caller so that tests
-//! remain deterministic.
+//! IMPORTANT:
+//! Transactions must be validated by the caller before admission.
+//! This module does not independently verify signatures, balances,
+//! network identity, chain identity, or account nonces.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-/// Configuration for the mempool.
+/// Configuration limits for the mempool.
 #[derive(Debug, Clone)]
 pub struct MempoolConfig {
     pub max_transactions: usize,
@@ -26,16 +28,13 @@ impl Default for MempoolConfig {
             max_total_bytes: 64 * 1024 * 1024,
             max_transaction_bytes: 128 * 1024,
             max_per_sender: 100,
-            transaction_ttl: 60 * 60,
+            transaction_ttl: 3_600,
             max_per_sender_per_block: 10,
         }
     }
 }
 
 /// A transaction waiting to be included in a block.
-///
-/// The caller must validate the actual transaction signature,
-/// network, chain, nonce and balance before admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingTransaction {
     pub id: [u8; 32],
@@ -52,6 +51,7 @@ impl PendingTransaction {
     }
 }
 
+/// Errors returned by mempool operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MempoolError {
     DuplicateTransaction,
@@ -61,15 +61,15 @@ pub enum MempoolError {
     InvalidTransactionSize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Current mempool statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MempoolStats {
     pub transaction_count: usize,
     pub total_bytes: usize,
     pub sender_count: usize,
 }
 
-/// Pending transaction pool.
-#[derive(Debug)]
+/// Bounded storage for pending NOVARA transactions.
 pub struct Mempool {
     config: MempoolConfig,
     transactions: BTreeMap<[u8; 32], PendingTransaction>,
@@ -78,6 +78,7 @@ pub struct Mempool {
 }
 
 impl Mempool {
+    /// Creates an empty mempool with the supplied configuration.
     pub fn new(config: MempoolConfig) -> Self {
         Self {
             config,
@@ -87,7 +88,7 @@ impl Mempool {
         }
     }
 
-    /// Admit a transaction after external protocol validation.
+    /// Adds a transaction after the caller has validated it.
     pub fn admit(
         &mut self,
         transaction: PendingTransaction,
@@ -125,24 +126,27 @@ impl Mempool {
 
         self.total_bytes += size;
 
-        *self.sender_counts.entry(transaction.sender).or_insert(0) += 1;
+        *self
+            .sender_counts
+            .entry(transaction.sender)
+            .or_insert(0) += 1;
 
         self.transactions.insert(transaction.id, transaction);
 
         Ok(())
     }
 
-    /// Remove transactions that have exceeded their lifetime.
+    /// Removes transactions that have reached their configured lifetime.
+    ///
+    /// Returns the number of expired transactions removed.
     pub fn expire(&mut self, current_time: u64) -> usize {
-        let ttl = self.config.transaction_ttl;
-
-        let expired: Vec<[u8; 32]> = self
+        let expired_ids: Vec<[u8; 32]> = self
             .transactions
             .iter()
             .filter_map(|(id, transaction)| {
                 let age = current_time.saturating_sub(transaction.received_at);
 
-                if age >= ttl {
+                if age >= self.config.transaction_ttl {
                     Some(*id)
                 } else {
                     None
@@ -150,16 +154,20 @@ impl Mempool {
             })
             .collect();
 
-        let count = expired.len();
+        let mut removed = 0;
 
-        for id in expired {
-            self.remove(&id);
+        for id in expired_ids {
+            if self.remove(&id).is_some() {
+                removed += 1;
+            }
         }
 
-        count
+        removed
     }
 
-    /// Remove a transaction and update accounting.
+    /// Removes a transaction by its identifier.
+    ///
+    /// Returns the removed transaction, if it existed.
     pub fn remove(
         &mut self,
         id: &[u8; 32],
@@ -170,24 +178,30 @@ impl Mempool {
             .total_bytes
             .saturating_sub(transaction.size_bytes());
 
-        if let Some(count) = self.sender_counts.get_mut(&transaction.sender) {
-            *count -= 1;
+        let sender = transaction.sender;
 
-            if *count == 0 {
-                self.sender_counts.remove(&transaction.sender);
-            }
+        let remove_sender = if let Some(count) = self.sender_counts.get_mut(&sender) {
+            *count = count.saturating_sub(1);
+            *count == 0
+        } else {
+            false
+        };
+
+        if remove_sender {
+            self.sender_counts.remove(&sender);
         }
 
         Some(transaction)
     }
 
-    /// Select transactions for a block.
+    /// Selects transactions for a candidate block.
     ///
-    /// Selection is deterministic for the same input and time.
-    /// Higher fee-per-byte and older transactions receive priority.
-    /// A sender cannot monopolise the selection.
+    /// Higher fee-per-byte transactions are prioritised.
+    /// Older transactions break equal-priority ties.
+    /// The sender limit prevents one sender from monopolising selection.
     ///
     /// This method does not remove selected transactions.
+    /// Expected account nonces must be checked by the caller.
     pub fn select_for_block(
         &self,
         maximum_transactions: usize,
@@ -197,31 +211,24 @@ impl Mempool {
             self.transactions.values().collect();
 
         candidates.sort_by(|a, b| {
-            let age_a = current_time.saturating_sub(a.received_at);
-            let age_b = current_time.saturating_sub(b.received_at);
+            let a_size = a.size_bytes().max(1) as u128;
+            let b_size = b.size_bytes().max(1) as u128;
 
-            let size_a = a.size_bytes().max(1) as u128;
-            let size_b = b.size_bytes().max(1) as u128;
+            let a_priority = a.fee.saturating_mul(b_size);
+            let b_priority = b.fee.saturating_mul(a_size);
 
-            // Compare fee-per-byte without floating-point arithmetic.
-            let fee_a = a.fee.saturating_mul(size_b);
-            let fee_b = b.fee.saturating_mul(size_a);
-
-            // Age breaks fee-rate ties.
-            fee_b
-                .cmp(&fee_a)
-                .then_with(|| age_b.cmp(&age_a))
+            b_priority
+                .cmp(&a_priority)
+                .then_with(|| {
+                    let a_age = current_time.saturating_sub(a.received_at);
+                    let b_age = current_time.saturating_sub(b.received_at);
+                    b_age.cmp(&a_age)
+                })
                 .then_with(|| a.id.cmp(&b.id))
         });
 
         let mut selected = Vec::new();
-        let mut sender_counts: BTreeMap<[u8; 32], usize> =
-            BTreeMap::new();
-
-        // Enforce sequential nonces within each sender's selected
-        // transactions. The caller supplies the expected account nonce
-        // in a later integration stage.
-        let mut last_nonce: BTreeMap<[u8; 32], u64> =
+        let mut selected_per_sender: BTreeMap<[u8; 32], usize> =
             BTreeMap::new();
 
         for transaction in candidates {
@@ -229,7 +236,7 @@ impl Mempool {
                 break;
             }
 
-            let sender_count = sender_counts
+            let sender_count = selected_per_sender
                 .get(&transaction.sender)
                 .copied()
                 .unwrap_or(0);
@@ -238,15 +245,9 @@ impl Mempool {
                 continue;
             }
 
-            if let Some(previous_nonce) = last_nonce.get(&transaction.sender) {
-                if transaction.nonce != previous_nonce.saturating_add(1) {
-                    continue;
-                }
-            }
-
-            last_nonce.insert(transaction.sender, transaction.nonce);
-
-            *sender_counts.entry(transaction.sender).or_insert(0) += 1;
+            *selected_per_sender
+                .entry(transaction.sender)
+                .or_insert(0) += 1;
 
             selected.push(transaction.clone());
         }
@@ -254,10 +255,12 @@ impl Mempool {
         selected
     }
 
+    /// Returns a pending transaction by identifier.
     pub fn get(&self, id: &[u8; 32]) -> Option<&PendingTransaction> {
         self.transactions.get(id)
     }
 
+    /// Returns current mempool statistics.
     pub fn stats(&self) -> MempoolStats {
         MempoolStats {
             transaction_count: self.transactions.len(),
@@ -266,10 +269,12 @@ impl Mempool {
         }
     }
 
+    /// Checks whether a transaction exists.
     pub fn contains(&self, id: &[u8; 32]) -> bool {
         self.transactions.contains_key(id)
     }
 
+    /// Checks whether the mempool is empty.
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
     }
@@ -299,8 +304,9 @@ mod tests {
     #[test]
     fn admits_valid_pending_transaction() {
         let mut pool = Mempool::new(MempoolConfig::default());
+        let tx = transaction(1, 1, 0, 10, 100);
 
-        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
+        assert!(pool.admit(tx).is_ok());
         assert_eq!(pool.stats().transaction_count, 1);
     }
 
@@ -310,14 +316,11 @@ mod tests {
         let tx = transaction(1, 1, 0, 10, 100);
 
         assert!(pool.admit(tx.clone()).is_ok());
-        assert_eq!(
-            pool.admit(tx),
-            Err(MempoolError::DuplicateTransaction)
-        );
+        assert_eq!(pool.admit(tx), Err(MempoolError::DuplicateTransaction));
     }
 
     #[test]
-    fn rejects_empty_payload() {
+    fn rejects_empty_transaction_payload() {
         let mut pool = Mempool::new(MempoolConfig::default());
         let mut tx = transaction(1, 1, 0, 10, 100);
         tx.payload.clear();
@@ -365,7 +368,7 @@ mod tests {
     #[test]
     fn expires_old_transactions() {
         let config = MempoolConfig {
-            transaction_ttl: 100,
+            transaction_ttl: 10,
             ..MempoolConfig::default()
         };
 
@@ -373,7 +376,7 @@ mod tests {
 
         assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
 
-        assert_eq!(pool.expire(200), 1);
+        assert_eq!(pool.expire(110), 1);
         assert!(pool.is_empty());
     }
 
@@ -386,19 +389,33 @@ mod tests {
         assert!(pool.admit(tx).is_ok());
         assert!(pool.remove(&id).is_some());
 
-        assert_eq!(pool.stats().transaction_count, 0);
-        assert_eq!(pool.stats().total_bytes, 0);
+        let stats = pool.stats();
+
+        assert_eq!(stats.transaction_count, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.sender_count, 0);
     }
 
     #[test]
     fn higher_fee_per_byte_gets_priority() {
         let mut pool = Mempool::new(MempoolConfig::default());
 
-        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
-        assert!(pool.admit(transaction(2, 2, 0, 100, 100)).is_ok());
+        let low_fee = PendingTransaction {
+            fee: 10,
+            ..transaction(1, 1, 0, 10, 100)
+        };
 
-        let selected = pool.select_for_block(2, 100);
+        let high_fee = PendingTransaction {
+            fee: 100,
+            ..transaction(2, 2, 0, 100, 100)
+        };
 
+        assert!(pool.admit(low_fee).is_ok());
+        assert!(pool.admit(high_fee).is_ok());
+
+        let selected = pool.select_for_block(1, 100);
+
+        assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].id, [2; 32]);
     }
 
@@ -418,16 +435,20 @@ mod tests {
         let selected = pool.select_for_block(3, 100);
 
         assert_eq!(selected.len(), 2);
+        assert_ne!(selected[0].sender, selected[1].sender);
     }
 
     #[test]
     fn selection_does_not_remove_transactions() {
         let mut pool = Mempool::new(MempoolConfig::default());
+        let tx = transaction(1, 1, 0, 10, 100);
+        let id = tx.id;
 
-        assert!(pool.admit(transaction(1, 1, 0, 10, 100)).is_ok());
+        assert!(pool.admit(tx).is_ok());
 
-        let _ = pool.select_for_block(1, 100);
+        let _ = pool.select_for_block(10, 100);
 
+        assert!(pool.contains(&id));
         assert_eq!(pool.stats().transaction_count, 1);
     }
 }
