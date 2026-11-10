@@ -206,16 +206,16 @@ impl Block {
             return Err(BlockDecodeError::InvalidFormat);
         }
 
-        let transaction_count = usize::try_from(transaction_count)
-            .map_err(|_| BlockDecodeError::InvalidFormat)?;
+        let transaction_count =
+            usize::try_from(transaction_count).map_err(|_| BlockDecodeError::InvalidFormat)?;
 
         let mut transactions = Vec::with_capacity(transaction_count);
 
         for _ in 0..transaction_count {
             let transaction_length = reader.read_u64()?;
 
-            let transaction_length = usize::try_from(transaction_length)
-                .map_err(|_| BlockDecodeError::InvalidFormat)?;
+            let transaction_length =
+                usize::try_from(transaction_length).map_err(|_| BlockDecodeError::InvalidFormat)?;
 
             if transaction_length > MAX_TRANSACTION_SIZE {
                 return Err(BlockDecodeError::OversizedTransaction);
@@ -299,10 +299,7 @@ struct ByteReader<'a> {
 
 impl<'a> ByteReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            position: 0,
-        }
+        Self { bytes, position: 0 }
     }
 
     fn remaining(&self) -> usize {
@@ -571,6 +568,10 @@ mod tests {
         encoded[count_offset..count_offset + 8].copy_from_slice(&1u64.to_be_bytes());
 
         encoded.extend_from_slice(&((MAX_TRANSACTION_SIZE as u64) + 1).to_be_bytes());
+
+        // Satisfy the decoder's minimum-size precheck so it reaches
+        // the individual transaction-size limit check.
+        encoded.extend_from_slice(&[0u8; 104]);
 
         assert_eq!(
             Block::decode(&encoded, genesis.genesis_hash()),
