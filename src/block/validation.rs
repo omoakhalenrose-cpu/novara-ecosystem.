@@ -39,7 +39,6 @@ pub fn validate_block(
 block: &Block,
 context: &BlockValidationContext,
 ) -> Result<(), BlockValidationError> {
-// Check the block's identity and expected chain position.
 if block.header.network != context.network {
 return Err(BlockValidationError::WrongNetwork);
 }
@@ -60,7 +59,6 @@ if block.header.previous_hash != context.expected_previous_hash {
     return Err(BlockValidationError::WrongPreviousHash);
 }
 
-// Enforce the maximum transaction count before processing transactions.
 if block.transactions.len() > MAX_TRANSACTIONS_PER_BLOCK {
     return Err(BlockValidationError::TooManyTransactions);
 }
@@ -77,7 +75,7 @@ let mut encoded_size = b"NOVARA_BLOCK_ENCODING_V2".len()
     + 32
     + 8;
 
-// Track canonical transaction bytes to reject duplicate transactions.
+// Track canonical transaction bytes to reject duplicates.
 let mut seen_transactions = HashSet::new();
 
 for signed_transaction in &block.transactions {
@@ -91,8 +89,8 @@ for signed_transaction in &block.transactions {
         return Err(BlockValidationError::DuplicateTransaction);
     }
 
-    // Each serialized transaction is preceded by its 8-byte length,
-    // followed by a 32-byte public key and a 64-byte signature.
+    // Each transaction includes an 8-byte length prefix,
+    // a 32-byte public key and a 64-byte signature.
     encoded_size = encoded_size
         .checked_add(8)
         .and_then(|size| size.checked_add(transaction_bytes.len()))
@@ -104,7 +102,6 @@ for signed_transaction in &block.transactions {
     }
 }
 
-// Validate every transaction's network, chain and signature.
 let transaction_context = ValidationContext {
     network: context.network,
     chain_id: context.chain_id,
@@ -291,14 +288,12 @@ fn duplicate_transaction_is_rejected() {
 fn too_many_transactions_are_rejected() {
     let (mut block, context) = setup();
 
-    block.transactions = vec![
-        block.transactions[0].clone();
-        MAX_TRANSACTIONS_PER_BLOCK + 1
-    ];
+    block.transactions = vec![block.transactions[0].clone(); MAX_TRANSACTIONS_PER_BLOCK + 1];
 
     assert_eq!(
         validate_block(&block, &context),
         Err(BlockValidationError::TooManyTransactions)
     );
 }
+
 }
