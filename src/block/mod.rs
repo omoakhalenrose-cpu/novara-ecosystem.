@@ -32,533 +32,529 @@ const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
 pub struct BlockHash([u8; 32]);
 
 impl BlockHash {
-pub const fn new(bytes: [u8; 32]) -> Self {
-Self(bytes)
-}
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
 
-pub const fn as_bytes(&self) -> &[u8; 32] {
-    &self.0
-}
-
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 /// A transaction together with its digital signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedTransaction {
-pub transaction: Transaction,
-pub signature: TransactionSignature,
+    pub transaction: Transaction,
+    pub signature: TransactionSignature,
 }
 
 /// Header containing the identifying information of a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockHeader {
-pub network: NetworkId,
-pub chain_id: ChainId,
-pub genesis_hash: GenesisHash,
-pub height: u64,
-pub timestamp: u64,
-pub previous_hash: BlockHash,
-pub state_root: [u8; 32],
+    pub network: NetworkId,
+    pub chain_id: ChainId,
+    pub genesis_hash: GenesisHash,
+    pub height: u64,
+    pub timestamp: u64,
+    pub previous_hash: BlockHash,
+    pub state_root: [u8; 32],
 }
 
 /// A NOVARA block containing signed transactions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
-pub header: BlockHeader,
-pub transactions: Vec<SignedTransaction>,
+    pub header: BlockHeader,
+    pub transactions: Vec<SignedTransaction>,
 }
 
 /// Errors returned when decoding a serialized block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockDecodeError {
-InvalidFormat,
-UnsupportedVersion,
-InvalidNetwork,
-InvalidTransaction,
-WrongGenesis,
-TrailingBytes,
-OversizedBlock,
-TooManyTransactions,
-OversizedTransaction,
+    InvalidFormat,
+    UnsupportedVersion,
+    InvalidNetwork,
+    InvalidTransaction,
+    WrongGenesis,
+    TrailingBytes,
+    OversizedBlock,
+    TooManyTransactions,
+    OversizedTransaction,
 }
 
 impl Block {
-/// Creates a new V2 block with its resulting application State Root.
-#[allow(clippy::too_many_arguments)]
-pub fn new(
-network: NetworkId,
-chain_id: ChainId,
-genesis_hash: GenesisHash,
-height: u64,
-timestamp: u64,
-previous_hash: BlockHash,
-state_root: [u8; 32],
-transactions: Vec<SignedTransaction>,
-) -> Self {
-Self {
-header: BlockHeader {
-network,
-chain_id,
-genesis_hash,
-height,
-timestamp,
-previous_hash,
-state_root,
-},
-transactions,
-}
-}
-
-/// Calculates the deterministic SHA-256 block hash.
-///
-/// The State Root is included so that changing the resulting
-/// application state changes the block hash.
-pub fn hash(&self) -> BlockHash {
-    let mut hasher = Sha256::new();
-
-    hasher.update(BLOCK_DOMAIN);
-    hasher.update([self.header.network.as_byte()]);
-    hasher.update(self.header.chain_id.as_bytes());
-    hasher.update(self.header.genesis_hash.as_bytes());
-    hasher.update(self.header.height.to_be_bytes());
-    hasher.update(self.header.timestamp.to_be_bytes());
-    hasher.update(self.header.previous_hash.as_bytes());
-    hasher.update(self.header.state_root);
-
-    hasher.update((self.transactions.len() as u64).to_be_bytes());
-
-    for signed_transaction in &self.transactions {
-        let encoded = signed_transaction.transaction.encode();
-
-        hasher.update((encoded.len() as u64).to_be_bytes());
-        hasher.update(&encoded);
-        hasher.update(signed_transaction.signature.public_key);
-        hasher.update(signed_transaction.signature.signature);
+    /// Creates a new V2 block with its resulting application State Root.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        network: NetworkId,
+        chain_id: ChainId,
+        genesis_hash: GenesisHash,
+        height: u64,
+        timestamp: u64,
+        previous_hash: BlockHash,
+        state_root: [u8; 32],
+        transactions: Vec<SignedTransaction>,
+    ) -> Self {
+        Self {
+            header: BlockHeader {
+                network,
+                chain_id,
+                genesis_hash,
+                height,
+                timestamp,
+                previous_hash,
+                state_root,
+            },
+            transactions,
+        }
     }
 
-    BlockHash::new(hasher.finalize().into())
-}
+    /// Calculates the deterministic SHA-256 block hash.
+    ///
+    /// The State Root is included so that changing the resulting
+    /// application state changes the block hash.
+    pub fn hash(&self) -> BlockHash {
+        let mut hasher = Sha256::new();
 
-/// Serializes the complete block into the V2 binary format.
-pub fn encode(&self) -> Vec<u8> {
-    let mut bytes = Vec::new();
+        hasher.update(BLOCK_DOMAIN);
+        hasher.update([self.header.network.as_byte()]);
+        hasher.update(self.header.chain_id.as_bytes());
+        hasher.update(self.header.genesis_hash.as_bytes());
+        hasher.update(self.header.height.to_be_bytes());
+        hasher.update(self.header.timestamp.to_be_bytes());
+        hasher.update(self.header.previous_hash.as_bytes());
+        hasher.update(self.header.state_root);
 
-    bytes.extend_from_slice(BLOCK_ENCODING_DOMAIN);
-    bytes.push(self.header.network.as_byte());
-    bytes.extend_from_slice(self.header.chain_id.as_bytes());
-    bytes.extend_from_slice(self.header.genesis_hash.as_bytes());
-    bytes.extend_from_slice(&self.header.height.to_be_bytes());
-    bytes.extend_from_slice(&self.header.timestamp.to_be_bytes());
-    bytes.extend_from_slice(self.header.previous_hash.as_bytes());
-    bytes.extend_from_slice(&self.header.state_root);
+        hasher.update((self.transactions.len() as u64).to_be_bytes());
 
-    bytes.extend_from_slice(&(self.transactions.len() as u64).to_be_bytes());
+        for signed_transaction in &self.transactions {
+            let encoded = signed_transaction.transaction.encode();
 
-    for signed_transaction in &self.transactions {
-        let transaction_bytes = signed_transaction.transaction.encode();
-
-        bytes.extend_from_slice(&(transaction_bytes.len() as u64).to_be_bytes());
-        bytes.extend_from_slice(&transaction_bytes);
-        bytes.extend_from_slice(&signed_transaction.signature.public_key);
-        bytes.extend_from_slice(&signed_transaction.signature.signature);
-    }
-
-    bytes
-}
-
-/// Reconstructs a V2 block from bytes and checks its expected genesis.
-pub fn decode(
-    bytes: &[u8],
-    expected_genesis_hash: GenesisHash,
-) -> Result<Self, BlockDecodeError> {
-    // Reject oversized input before parsing or allocating transaction data.
-    if bytes.len() > MAX_BLOCK_SIZE {
-        return Err(BlockDecodeError::OversizedBlock);
-    }
-
-    let mut reader = ByteReader::new(bytes);
-
-    if reader.read_exact(BLOCK_ENCODING_DOMAIN.len())? != BLOCK_ENCODING_DOMAIN {
-        return Err(BlockDecodeError::UnsupportedVersion);
-    }
-
-    let network = decode_network(reader.read_u8()?)?;
-
-    let chain_id = ChainId::new(reader.read_array::<32>()?);
-    let genesis_hash = expected_genesis_hash;
-
-    if reader.read_array::<32>()? != *genesis_hash.as_bytes() {
-        return Err(BlockDecodeError::WrongGenesis);
-    }
-
-    let height = reader.read_u64()?;
-    let timestamp = reader.read_u64()?;
-    let previous_hash = BlockHash::new(reader.read_array::<32>()?);
-    let state_root = reader.read_array::<32>()?;
-
-    let transaction_count = reader.read_u64()?;
-
-    // Enforce the configured transaction-count limit before allocating.
-    if transaction_count > MAX_TRANSACTIONS_PER_BLOCK as u64 {
-        return Err(BlockDecodeError::TooManyTransactions);
-    }
-
-    // Every transaction requires at least a length prefix,
-    // a transaction payload, a public key, and a signature.
-    let remaining = reader.remaining();
-
-    if transaction_count > (remaining / 112) as u64 {
-        return Err(BlockDecodeError::InvalidFormat);
-    }
-
-    let mut transactions = Vec::with_capacity(transaction_count as usize);
-
-    for _ in 0..transaction_count {
-        let transaction_length = reader.read_u64()?;
-
-        let transaction_length = usize::try_from(transaction_length)
-            .map_err(|_| BlockDecodeError::InvalidFormat)?;
-
-        // Reject oversized transactions before reading their payload.
-        if transaction_length > MAX_TRANSACTION_SIZE {
-            return Err(BlockDecodeError::OversizedTransaction);
+            hasher.update((encoded.len() as u64).to_be_bytes());
+            hasher.update(&encoded);
+            hasher.update(signed_transaction.signature.public_key);
+            hasher.update(signed_transaction.signature.signature);
         }
 
-        let transaction_bytes = reader.read_exact(transaction_length)?;
-
-        let transaction = decode_transaction(transaction_bytes)?;
-
-        let public_key = reader.read_array::<32>()?;
-        let signature = reader.read_array::<64>()?;
-
-        transactions.push(SignedTransaction {
-            transaction,
-            signature: TransactionSignature {
-                public_key,
-                signature,
-            },
-        });
+        BlockHash::new(hasher.finalize().into())
     }
 
-    if reader.remaining() != 0 {
-        return Err(BlockDecodeError::TrailingBytes);
+    /// Serializes the complete block into the V2 binary format.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        bytes.extend_from_slice(BLOCK_ENCODING_DOMAIN);
+        bytes.push(self.header.network.as_byte());
+        bytes.extend_from_slice(self.header.chain_id.as_bytes());
+        bytes.extend_from_slice(self.header.genesis_hash.as_bytes());
+        bytes.extend_from_slice(&self.header.height.to_be_bytes());
+        bytes.extend_from_slice(&self.header.timestamp.to_be_bytes());
+        bytes.extend_from_slice(self.header.previous_hash.as_bytes());
+        bytes.extend_from_slice(&self.header.state_root);
+
+        bytes.extend_from_slice(&(self.transactions.len() as u64).to_be_bytes());
+
+        for signed_transaction in &self.transactions {
+            let transaction_bytes = signed_transaction.transaction.encode();
+
+            bytes.extend_from_slice(&(transaction_bytes.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(&transaction_bytes);
+            bytes.extend_from_slice(&signed_transaction.signature.public_key);
+            bytes.extend_from_slice(&signed_transaction.signature.signature);
+        }
+
+        bytes
     }
 
-    Ok(Self::new(
-        network,
-        chain_id,
-        genesis_hash,
-        height,
-        timestamp,
-        previous_hash,
-        state_root,
-        transactions,
-    ))
-}
+    /// Reconstructs a V2 block from bytes and checks its expected genesis.
+    pub fn decode(
+        bytes: &[u8],
+        expected_genesis_hash: GenesisHash,
+    ) -> Result<Self, BlockDecodeError> {
+        // Reject oversized input before parsing or allocating transaction data.
+        if bytes.len() > MAX_BLOCK_SIZE {
+            return Err(BlockDecodeError::OversizedBlock);
+        }
 
+        let mut reader = ByteReader::new(bytes);
+
+        if reader.read_exact(BLOCK_ENCODING_DOMAIN.len())? != BLOCK_ENCODING_DOMAIN {
+            return Err(BlockDecodeError::UnsupportedVersion);
+        }
+
+        let network = decode_network(reader.read_u8()?)?;
+
+        let chain_id = ChainId::new(reader.read_array::<32>()?);
+        let genesis_hash = expected_genesis_hash;
+
+        if reader.read_array::<32>()? != *genesis_hash.as_bytes() {
+            return Err(BlockDecodeError::WrongGenesis);
+        }
+
+        let height = reader.read_u64()?;
+        let timestamp = reader.read_u64()?;
+        let previous_hash = BlockHash::new(reader.read_array::<32>()?);
+        let state_root = reader.read_array::<32>()?;
+
+        let transaction_count = reader.read_u64()?;
+
+        // Enforce the configured transaction-count limit before allocating.
+        if transaction_count > MAX_TRANSACTIONS_PER_BLOCK as u64 {
+            return Err(BlockDecodeError::TooManyTransactions);
+        }
+
+        // Every transaction requires at least a length prefix,
+        // a transaction payload, a public key, and a signature.
+        let remaining = reader.remaining();
+
+        if transaction_count > (remaining / 112) as u64 {
+            return Err(BlockDecodeError::InvalidFormat);
+        }
+
+        let mut transactions = Vec::with_capacity(transaction_count as usize);
+
+        for _ in 0..transaction_count {
+            let transaction_length = reader.read_u64()?;
+
+            let transaction_length = usize::try_from(transaction_length)
+                .map_err(|_| BlockDecodeError::InvalidFormat)?;
+
+            // Reject oversized transactions before reading their payload.
+            if transaction_length > MAX_TRANSACTION_SIZE {
+                return Err(BlockDecodeError::OversizedTransaction);
+            }
+
+            let transaction_bytes = reader.read_exact(transaction_length)?;
+
+            let transaction = decode_transaction(transaction_bytes)?;
+
+            let public_key = reader.read_array::<32>()?;
+            let signature = reader.read_array::<64>()?;
+
+            transactions.push(SignedTransaction {
+                transaction,
+                signature: TransactionSignature {
+                    public_key,
+                    signature,
+                },
+            });
+        }
+
+        if reader.remaining() != 0 {
+            return Err(BlockDecodeError::TrailingBytes);
+        }
+
+        Ok(Self::new(
+            network,
+            chain_id,
+            genesis_hash,
+            height,
+            timestamp,
+            previous_hash,
+            state_root,
+            transactions,
+        ))
+    }
 }
 
 fn decode_network(value: u8) -> Result<NetworkId, BlockDecodeError> {
-match value {
-0x01 => Ok(NetworkId::Development),
-0x02 => Ok(NetworkId::Testnet),
-0x03 => Ok(NetworkId::Mainnet),
-_ => Err(BlockDecodeError::InvalidNetwork),
-}
+    match value {
+        0x01 => Ok(NetworkId::Development),
+        0x02 => Ok(NetworkId::Testnet),
+        0x03 => Ok(NetworkId::Mainnet),
+        _ => Err(BlockDecodeError::InvalidNetwork),
+    }
 }
 
 fn decode_transaction(bytes: &[u8]) -> Result<Transaction, BlockDecodeError> {
-let mut reader = ByteReader::new(bytes);
+    let mut reader = ByteReader::new(bytes);
 
-if reader.read_exact(TRANSACTION_DOMAIN.len())? != TRANSACTION_DOMAIN {
-    return Err(BlockDecodeError::InvalidTransaction);
-}
+    if reader.read_exact(TRANSACTION_DOMAIN.len())? != TRANSACTION_DOMAIN {
+        return Err(BlockDecodeError::InvalidTransaction);
+    }
 
-let version = reader.read_u16()?;
-let network = decode_network(reader.read_u8()?)?;
+    let version = reader.read_u16()?;
+    let network = decode_network(reader.read_u8()?)?;
 
-let chain_id = ChainId::new(reader.read_array::<32>()?);
-let sender = crate::account::address::AccountId::new(reader.read_array::<32>()?);
-let recipient = crate::account::address::AccountId::new(reader.read_array::<32>()?);
-let asset_id = AssetId::new(reader.read_array::<32>()?);
+    let chain_id = ChainId::new(reader.read_array::<32>()?);
+    let sender = crate::account::address::AccountId::new(reader.read_array::<32>()?);
+    let recipient = crate::account::address::AccountId::new(reader.read_array::<32>()?);
+    let asset_id = AssetId::new(reader.read_array::<32>()?);
 
-let amount = reader.read_u128()?;
-let nonce = reader.read_u64()?;
+    let amount = reader.read_u128()?;
+    let nonce = reader.read_u64()?;
 
-if reader.remaining() != 0 {
-    return Err(BlockDecodeError::InvalidTransaction);
-}
+    if reader.remaining() != 0 {
+        return Err(BlockDecodeError::InvalidTransaction);
+    }
 
-Transaction::new(
-    version, network, chain_id, sender, recipient, asset_id, amount, nonce,
-)
-.map_err(|_| BlockDecodeError::InvalidTransaction)
-
+    Transaction::new(
+        version, network, chain_id, sender, recipient, asset_id, amount, nonce,
+    )
+    .map_err(|_| BlockDecodeError::InvalidTransaction)
 }
 
 /// Reads fixed-size values safely from a byte slice.
 struct ByteReader<'a> {
-bytes: &'a [u8],
-position: usize,
+    bytes: &'a [u8],
+    position: usize,
 }
 
 impl<'a> ByteReader<'a> {
-fn new(bytes: &'a [u8]) -> Self {
-Self { bytes, position: 0 }
-}
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
 
-fn remaining(&self) -> usize {
-    self.bytes.len() - self.position
-}
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.position
+    }
 
-fn read_exact(&mut self, length: usize) -> Result<&'a [u8], BlockDecodeError> {
-    let end = self
-        .position
-        .checked_add(length)
-        .ok_or(BlockDecodeError::InvalidFormat)?;
+    fn read_exact(&mut self, length: usize) -> Result<&'a [u8], BlockDecodeError> {
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or(BlockDecodeError::InvalidFormat)?;
 
-    let value = self
-        .bytes
-        .get(self.position..end)
-        .ok_or(BlockDecodeError::InvalidFormat)?;
+        let value = self
+            .bytes
+            .get(self.position..end)
+            .ok_or(BlockDecodeError::InvalidFormat)?;
 
-    self.position = end;
+        self.position = end;
 
-    Ok(value)
-}
+        Ok(value)
+    }
 
-fn read_array<const N: usize>(&mut self) -> Result<[u8; N], BlockDecodeError> {
-    self.read_exact(N)?
-        .try_into()
-        .map_err(|_| BlockDecodeError::InvalidFormat)
-}
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], BlockDecodeError> {
+        self.read_exact(N)?
+            .try_into()
+            .map_err(|_| BlockDecodeError::InvalidFormat)
+    }
 
-fn read_u8(&mut self) -> Result<u8, BlockDecodeError> {
-    Ok(self.read_array::<1>()?[0])
-}
+    fn read_u8(&mut self) -> Result<u8, BlockDecodeError> {
+        Ok(self.read_array::<1>()?[0])
+    }
 
-fn read_u16(&mut self) -> Result<u16, BlockDecodeError> {
-    Ok(u16::from_be_bytes(self.read_array::<2>()?))
-}
+    fn read_u16(&mut self) -> Result<u16, BlockDecodeError> {
+        Ok(u16::from_be_bytes(self.read_array::<2>()?))
+    }
 
-fn read_u64(&mut self) -> Result<u64, BlockDecodeError> {
-    Ok(u64::from_be_bytes(self.read_array::<8>()?))
-}
+    fn read_u64(&mut self) -> Result<u64, BlockDecodeError> {
+        Ok(u64::from_be_bytes(self.read_array::<8>()?))
+    }
 
-fn read_u128(&mut self) -> Result<u128, BlockDecodeError> {
-    Ok(u128::from_be_bytes(self.read_array::<16>()?))
-}
-
+    fn read_u128(&mut self) -> Result<u128, BlockDecodeError> {
+        Ok(u128::from_be_bytes(self.read_array::<16>()?))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-use super::*;
-use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
+    use super::*;
+    use crate::genesis::{GenesisAllocation, GenesisConfig, InitializedGenesis};
 
-fn test_genesis() -> InitializedGenesis {
-    InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
-}
+    fn test_genesis() -> InitializedGenesis {
+        InitializedGenesis::new(GenesisConfig::new(NetworkId::Development, Vec::new())).unwrap()
+    }
 
-fn empty_block(genesis: &InitializedGenesis) -> Block {
-    Block::new(
-        NetworkId::Development,
-        genesis.chain_id(),
-        genesis.genesis_hash(),
-        1,
-        1_000,
-        BlockHash::new([0u8; 32]),
-        [1u8; 32],
-        Vec::new(),
-    )
-}
+    fn empty_block(genesis: &InitializedGenesis) -> Block {
+        Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        )
+    }
 
-#[test]
-fn block_hash_is_deterministic() {
-    let genesis = test_genesis();
-    let block = empty_block(&genesis);
+    #[test]
+    fn block_hash_is_deterministic() {
+        let genesis = test_genesis();
+        let block = empty_block(&genesis);
 
-    assert_eq!(block.hash(), block.hash());
-}
+        assert_eq!(block.hash(), block.hash());
+    }
 
-#[test]
-fn different_block_heights_produce_different_hashes() {
-    let genesis = test_genesis();
-    let first = empty_block(&genesis);
+    #[test]
+    fn different_block_heights_produce_different_hashes() {
+        let genesis = test_genesis();
+        let first = empty_block(&genesis);
 
-    let second = Block::new(
-        NetworkId::Development,
-        genesis.chain_id(),
-        genesis.genesis_hash(),
-        2,
-        1_000,
-        BlockHash::new([0u8; 32]),
-        [1u8; 32],
-        Vec::new(),
-    );
+        let second = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            2,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        );
 
-    assert_ne!(first.hash(), second.hash());
-}
+        assert_ne!(first.hash(), second.hash());
+    }
 
-#[test]
-fn different_previous_hashes_produce_different_block_hashes() {
-    let genesis = test_genesis();
-    let first = empty_block(&genesis);
+    #[test]
+    fn different_previous_hashes_produce_different_block_hashes() {
+        let genesis = test_genesis();
+        let first = empty_block(&genesis);
 
-    let second = Block::new(
-        NetworkId::Development,
-        genesis.chain_id(),
-        genesis.genesis_hash(),
-        1,
-        1_000,
-        BlockHash::new([2u8; 32]),
-        [1u8; 32],
-        Vec::new(),
-    );
+        let second = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([2u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        );
 
-    assert_ne!(first.hash(), second.hash());
-}
+        assert_ne!(first.hash(), second.hash());
+    }
 
-#[test]
-fn different_timestamps_produce_different_block_hashes() {
-    let genesis = test_genesis();
-    let first = empty_block(&genesis);
+    #[test]
+    fn different_timestamps_produce_different_block_hashes() {
+        let genesis = test_genesis();
+        let first = empty_block(&genesis);
 
-    let second = Block::new(
-        NetworkId::Development,
-        genesis.chain_id(),
-        genesis.genesis_hash(),
-        1,
-        2_000,
-        BlockHash::new([0u8; 32]),
-        [1u8; 32],
-        Vec::new(),
-    );
+        let second = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            2_000,
+            BlockHash::new([0u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        );
 
-    assert_ne!(first.hash(), second.hash());
-}
+        assert_ne!(first.hash(), second.hash());
+    }
 
-#[test]
-fn different_genesis_hashes_produce_different_block_hashes() {
-    let genesis = test_genesis();
+    #[test]
+    fn different_genesis_hashes_produce_different_block_hashes() {
+        let genesis = test_genesis();
 
-    let different_genesis = InitializedGenesis::new(GenesisConfig::new(
-        NetworkId::Development,
-        vec![GenesisAllocation {
-            account_id: crate::account::address::AccountId::new([5u8; 32]),
-            asset_id: AssetId::new([6u8; 32]),
-            amount: 100,
-        }],
-    ))
-    .unwrap();
+        let different_genesis = InitializedGenesis::new(GenesisConfig::new(
+            NetworkId::Development,
+            vec![GenesisAllocation {
+                account_id: crate::account::address::AccountId::new([5u8; 32]),
+                asset_id: AssetId::new([6u8; 32]),
+                amount: 100,
+            }],
+        ))
+        .unwrap();
 
-    let first = empty_block(&genesis);
+        let first = empty_block(&genesis);
 
-    let second = Block::new(
-        NetworkId::Development,
-        different_genesis.chain_id(),
-        different_genesis.genesis_hash(),
-        1,
-        1_000,
-        BlockHash::new([0u8; 32]),
-        [1u8; 32],
-        Vec::new(),
-    );
+        let second = Block::new(
+            NetworkId::Development,
+            different_genesis.chain_id(),
+            different_genesis.genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            [1u8; 32],
+            Vec::new(),
+        );
 
-    assert_ne!(first.hash(), second.hash());
-}
+        assert_ne!(first.hash(), second.hash());
+    }
 
-#[test]
-fn different_state_roots_produce_different_block_hashes() {
-    let genesis = test_genesis();
-    let first = empty_block(&genesis);
+    #[test]
+    fn different_state_roots_produce_different_block_hashes() {
+        let genesis = test_genesis();
+        let first = empty_block(&genesis);
 
-    let second = Block::new(
-        NetworkId::Development,
-        genesis.chain_id(),
-        genesis.genesis_hash(),
-        1,
-        1_000,
-        BlockHash::new([0u8; 32]),
-        [2u8; 32],
-        Vec::new(),
-    );
+        let second = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            BlockHash::new([0u8; 32]),
+            [2u8; 32],
+            Vec::new(),
+        );
 
-    assert_ne!(first.hash(), second.hash());
-}
+        assert_ne!(first.hash(), second.hash());
+    }
 
-#[test]
-fn block_encoding_round_trip_preserves_hash() {
-    let genesis = test_genesis();
-    let block = empty_block(&genesis);
+    #[test]
+    fn block_encoding_round_trip_preserves_hash() {
+        let genesis = test_genesis();
+        let block = empty_block(&genesis);
 
-    let encoded = block.encode();
-    let decoded = Block::decode(&encoded, genesis.genesis_hash()).unwrap();
+        let encoded = block.encode();
+        let decoded = Block::decode(&encoded, genesis.genesis_hash()).unwrap();
 
-    assert_eq!(decoded, block);
-    assert_eq!(decoded.hash(), block.hash());
-    assert_eq!(decoded.header.state_root, block.header.state_root);
-}
+        assert_eq!(decoded, block);
+        assert_eq!(decoded.hash(), block.hash());
+        assert_eq!(decoded.header.state_root, block.header.state_root);
+    }
 
-#[test]
-fn block_decoder_rejects_wrong_genesis() {
-    let genesis = test_genesis();
-    let block = empty_block(&genesis);
+    #[test]
+    fn block_decoder_rejects_wrong_genesis() {
+        let genesis = test_genesis();
+        let block = empty_block(&genesis);
 
-    let other_genesis = InitializedGenesis::new(GenesisConfig::new(
-        NetworkId::Development,
-        vec![GenesisAllocation {
-            account_id: crate::account::address::AccountId::new([5u8; 32]),
-            asset_id: AssetId::new([6u8; 32]),
-            amount: 100,
-        }],
-    ))
-    .unwrap();
+        let other_genesis = InitializedGenesis::new(GenesisConfig::new(
+            NetworkId::Development,
+            vec![GenesisAllocation {
+                account_id: crate::account::address::AccountId::new([5u8; 32]),
+                asset_id: AssetId::new([6u8; 32]),
+                amount: 100,
+            }],
+        ))
+        .unwrap();
 
-    assert_eq!(
-        Block::decode(&block.encode(), other_genesis.genesis_hash()),
-        Err(BlockDecodeError::WrongGenesis)
-    );
-}
+        assert_eq!(
+            Block::decode(&block.encode(), other_genesis.genesis_hash()),
+            Err(BlockDecodeError::WrongGenesis)
+        );
+    }
 
-#[test]
-fn block_decoder_rejects_trailing_bytes() {
-    let genesis = test_genesis();
-    let block = empty_block(&genesis);
+    #[test]
+    fn block_decoder_rejects_trailing_bytes() {
+        let genesis = test_genesis();
+        let block = empty_block(&genesis);
 
-    let mut encoded = block.encode();
-    encoded.push(0);
+        let mut encoded = block.encode();
+        encoded.push(0);
 
-    assert_eq!(
-        Block::decode(&encoded, genesis.genesis_hash()),
-        Err(BlockDecodeError::TrailingBytes)
-    );
-}
+        assert_eq!(
+            Block::decode(&encoded, genesis.genesis_hash()),
+            Err(BlockDecodeError::TrailingBytes)
+        );
+    }
 
-#[test]
-fn block_decoder_rejects_oversized_blocks() {
-    let genesis = test_genesis();
-    let oversized = vec![0u8; MAX_BLOCK_SIZE + 1];
+    #[test]
+    fn block_decoder_rejects_oversized_blocks() {
+        let genesis = test_genesis();
+        let oversized = vec![0u8; MAX_BLOCK_SIZE + 1];
 
-    assert_eq!(
-        Block::decode(&oversized, genesis.genesis_hash()),
-        Err(BlockDecodeError::OversizedBlock)
-    );
-}
+        assert_eq!(
+            Block::decode(&oversized, genesis.genesis_hash()),
+            Err(BlockDecodeError::OversizedBlock)
+        );
+    }
 
-#[test]
-fn block_decoder_rejects_too_many_transactions() {
-    let genesis = test_genesis();
-    let mut encoded = empty_block(&genesis).encode();
+    #[test]
+    fn block_decoder_rejects_too_many_transactions() {
+        let genesis = test_genesis();
+        let mut encoded = empty_block(&genesis).encode();
 
-    let count_position = BLOCK_ENCODING_DOMAIN.len() + 1 + 32 + 32 + 8 + 8 + 32 + 32;
+        let count_position = BLOCK_ENCODING_DOMAIN.len() + 1 + 32 + 32 + 8 + 8 + 32 + 32;
 
-    encoded[count_position..count_position + 8]
-        .copy_from_slice(&((MAX_TRANSACTIONS_PER_BLOCK as u64) + 1).to_be_bytes());
+        encoded[count_position..count_position + 8]
+            .copy_from_slice(&((MAX_TRANSACTIONS_PER_BLOCK as u64) + 1).to_be_bytes());
 
-    assert_eq!(
-        Block::decode(&encoded, genesis.genesis_hash()),
-        Err(BlockDecodeError::TooManyTransactions)
-    );
- }
+        assert_eq!(
+            Block::decode(&encoded, genesis.genesis_hash()),
+            Err(BlockDecodeError::TooManyTransactions)
+        );
+    }
 }
