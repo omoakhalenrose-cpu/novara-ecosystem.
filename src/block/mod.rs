@@ -215,8 +215,8 @@ impl Block {
         for _ in 0..transaction_count {
             let transaction_length = reader.read_u64()?;
 
-            let transaction_length = usize::try_from(transaction_length)
-                .map_err(|_| BlockDecodeError::InvalidFormat)?;
+            let transaction_length =
+                usize::try_from(transaction_length).map_err(|_| BlockDecodeError::InvalidFormat)?;
 
             // Reject oversized transactions before reading their payload.
             if transaction_length > MAX_TRANSACTION_SIZE {
