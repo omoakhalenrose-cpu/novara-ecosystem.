@@ -3,11 +3,9 @@
 use std::collections::HashSet;
 
 use crate::account::network::NetworkId;
-use crate::transaction::validation::{validate_transaction, ValidationContext, ValidationError};
+use crate::transaction::validation::{ValidationContext, ValidationError, validate_transaction};
 
-use super::{
-    Block, BlockHash, MAX_BLOCK_SIZE, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_BLOCK,
-};
+use super::{Block, BlockHash, MAX_BLOCK_SIZE, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_BLOCK};
 
 /// Rules describing the expected position and identity of a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,15 +63,7 @@ pub fn validate_block(
 
     // Calculate the encoded block size without allocating a complete
     // additional encoded copy of the block.
-    let mut encoded_size = b"NOVARA_BLOCK_ENCODING_V2".len()
-        + 1
-        + 32
-        + 32
-        + 8
-        + 8
-        + 32
-        + 32
-        + 8;
+    let mut encoded_size = b"NOVARA_BLOCK_ENCODING_V2".len() + 1 + 32 + 32 + 8 + 8 + 32 + 32 + 8;
 
     // Track canonical transaction bytes to reject duplicates.
     let mut seen_transactions = HashSet::new();
@@ -133,8 +123,7 @@ mod tests {
         let identity = Ed25519Identity::generate();
         let network = NetworkId::Development;
 
-        let genesis =
-            InitializedGenesis::new(GenesisConfig::new(network, Vec::new())).unwrap();
+        let genesis = InitializedGenesis::new(GenesisConfig::new(network, Vec::new())).unwrap();
 
         let chain_id = genesis.chain_id();
         let genesis_hash = genesis.genesis_hash();
