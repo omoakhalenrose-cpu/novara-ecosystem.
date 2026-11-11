@@ -560,5 +560,5 @@ fn block_decoder_rejects_too_many_transactions() {
         Block::decode(&encoded, genesis.genesis_hash()),
         Err(BlockDecodeError::TooManyTransactions)
     );
-  }
+ }
 }
