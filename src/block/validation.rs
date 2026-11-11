@@ -1,9 +1,11 @@
 //! NOVARA block validation.
 
+use std::collections::HashSet;
+
 use crate::account::network::NetworkId;
 use crate::transaction::validation::{ValidationContext, ValidationError, validate_transaction};
 
-use super::{Block, BlockHash};
+use super::{Block, BlockHash, MAX_BLOCK_SIZE, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_BLOCK};
 
 /// Rules describing the expected position and identity of a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +25,10 @@ pub enum BlockValidationError {
     WrongGenesis,
     WrongHeight,
     WrongPreviousHash,
+    OversizedBlock,
+    TooManyTransactions,
+    OversizedTransaction,
+    DuplicateTransaction,
     InvalidTransaction(ValidationError),
 }
 
@@ -51,6 +57,41 @@ pub fn validate_block(
         return Err(BlockValidationError::WrongPreviousHash);
     }
 
+    if block.transactions.len() > MAX_TRANSACTIONS_PER_BLOCK {
+        return Err(BlockValidationError::TooManyTransactions);
+    }
+
+    // Calculate the encoded block size without allocating a complete
+    // additional encoded copy of the block.
+    let mut encoded_size = b"NOVARA_BLOCK_ENCODING_V2".len() + 1 + 32 + 32 + 8 + 8 + 32 + 32 + 8;
+
+    // Track canonical transaction bytes to reject duplicates.
+    let mut seen_transactions = HashSet::new();
+
+    for signed_transaction in &block.transactions {
+        let transaction_bytes = signed_transaction.transaction.encode();
+
+        if transaction_bytes.len() > MAX_TRANSACTION_SIZE {
+            return Err(BlockValidationError::OversizedTransaction);
+        }
+
+        if !seen_transactions.insert(transaction_bytes.clone()) {
+            return Err(BlockValidationError::DuplicateTransaction);
+        }
+
+        // Each transaction includes an 8-byte length prefix,
+        // a 32-byte public key and a 64-byte signature.
+        encoded_size = encoded_size
+            .checked_add(8)
+            .and_then(|size| size.checked_add(transaction_bytes.len()))
+            .and_then(|size| size.checked_add(32 + 64))
+            .ok_or(BlockValidationError::OversizedBlock)?;
+
+        if encoded_size > MAX_BLOCK_SIZE {
+            return Err(BlockValidationError::OversizedBlock);
+        }
+    }
+
     let transaction_context = ValidationContext {
         network: context.network,
         chain_id: context.chain_id,
@@ -71,6 +112,7 @@ pub fn validate_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
     use crate::genesis::{GenesisConfig, InitializedGenesis};
@@ -215,6 +257,31 @@ mod tests {
             Err(BlockValidationError::InvalidTransaction(
                 ValidationError::InvalidSignature
             ))
+        );
+    }
+
+    #[test]
+    fn duplicate_transaction_is_rejected() {
+        let (mut block, context) = setup();
+
+        let duplicate = block.transactions[0].clone();
+        block.transactions.push(duplicate);
+
+        assert_eq!(
+            validate_block(&block, &context),
+            Err(BlockValidationError::DuplicateTransaction)
+        );
+    }
+
+    #[test]
+    fn too_many_transactions_are_rejected() {
+        let (mut block, context) = setup();
+
+        block.transactions = vec![block.transactions[0].clone(); MAX_TRANSACTIONS_PER_BLOCK + 1];
+
+        assert_eq!(
+            validate_block(&block, &context),
+            Err(BlockValidationError::TooManyTransactions)
         );
     }
 }
