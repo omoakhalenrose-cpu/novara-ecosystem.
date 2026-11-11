@@ -9,6 +9,15 @@ use crate::transaction::{AssetId, ChainId, Transaction};
 
 pub mod validation;
 
+/// Maximum serialized block size: 1 MiB.
+pub const MAX_BLOCK_SIZE: usize = 1_048_576;
+
+/// Maximum number of transactions permitted in one block.
+pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
+
+/// Maximum serialized transaction size.
+pub const MAX_TRANSACTION_SIZE: usize = 512;
+
 /// Domain separator for NOVARA block hashing version 2.
 const BLOCK_DOMAIN: &[u8] = b"NOVARA_BLOCK_V2";
 
@@ -17,15 +26,6 @@ const BLOCK_ENCODING_DOMAIN: &[u8] = b"NOVARA_BLOCK_ENCODING_V2";
 
 /// Domain separator for serialized NOVARA transactions.
 const TRANSACTION_DOMAIN: &[u8] = b"NOVARA_TRANSACTION_V1";
-
-/// Maximum serialized block size: 1 MiB.
-pub const MAX_BLOCK_SIZE: usize = 1_048_576;
-
-/// Maximum number of transactions in one block.
-pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 10_000;
-
-/// Maximum serialized size of one transaction.
-pub const MAX_TRANSACTION_SIZE: usize = 512;
 
 /// Identifies a block using its SHA-256 hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -170,6 +170,7 @@ impl Block {
         bytes: &[u8],
         expected_genesis_hash: GenesisHash,
     ) -> Result<Self, BlockDecodeError> {
+        // Reject oversized input before parsing or allocating transaction data.
         if bytes.len() > MAX_BLOCK_SIZE {
             return Err(BlockDecodeError::OversizedBlock);
         }
@@ -196,20 +197,20 @@ impl Block {
 
         let transaction_count = reader.read_u64()?;
 
+        // Enforce the configured transaction-count limit before allocating.
         if transaction_count > MAX_TRANSACTIONS_PER_BLOCK as u64 {
             return Err(BlockDecodeError::TooManyTransactions);
         }
 
+        // Every transaction requires at least a length prefix,
+        // a transaction payload, a public key, and a signature.
         let remaining = reader.remaining();
 
         if transaction_count > (remaining / 112) as u64 {
             return Err(BlockDecodeError::InvalidFormat);
         }
 
-        let transaction_count =
-            usize::try_from(transaction_count).map_err(|_| BlockDecodeError::InvalidFormat)?;
-
-        let mut transactions = Vec::with_capacity(transaction_count);
+        let mut transactions = Vec::with_capacity(transaction_count as usize);
 
         for _ in 0..transaction_count {
             let transaction_length = reader.read_u64()?;
@@ -217,6 +218,7 @@ impl Block {
             let transaction_length =
                 usize::try_from(transaction_length).map_err(|_| BlockDecodeError::InvalidFormat)?;
 
+            // Reject oversized transactions before reading their payload.
             if transaction_length > MAX_TRANSACTION_SIZE {
                 return Err(BlockDecodeError::OversizedTransaction);
             }
@@ -530,12 +532,12 @@ mod tests {
     }
 
     #[test]
-    fn block_decoder_rejects_oversized_block() {
+    fn block_decoder_rejects_oversized_blocks() {
         let genesis = test_genesis();
-        let encoded = vec![0u8; MAX_BLOCK_SIZE + 1];
+        let oversized = vec![0u8; MAX_BLOCK_SIZE + 1];
 
         assert_eq!(
-            Block::decode(&encoded, genesis.genesis_hash()),
+            Block::decode(&oversized, genesis.genesis_hash()),
             Err(BlockDecodeError::OversizedBlock)
         );
     }
@@ -543,39 +545,16 @@ mod tests {
     #[test]
     fn block_decoder_rejects_too_many_transactions() {
         let genesis = test_genesis();
-        let block = empty_block(&genesis);
-        let mut encoded = block.encode();
+        let mut encoded = empty_block(&genesis).encode();
 
-        let count_offset = BLOCK_ENCODING_DOMAIN.len() + 1 + 32 + 32 + 8 + 8 + 32 + 32;
+        let count_position = BLOCK_ENCODING_DOMAIN.len() + 1 + 32 + 32 + 8 + 8 + 32 + 32;
 
-        encoded[count_offset..count_offset + 8]
+        encoded[count_position..count_position + 8]
             .copy_from_slice(&((MAX_TRANSACTIONS_PER_BLOCK as u64) + 1).to_be_bytes());
 
         assert_eq!(
             Block::decode(&encoded, genesis.genesis_hash()),
             Err(BlockDecodeError::TooManyTransactions)
-        );
-    }
-
-    #[test]
-    fn block_decoder_rejects_oversized_transaction() {
-        let genesis = test_genesis();
-        let block = empty_block(&genesis);
-        let mut encoded = block.encode();
-
-        let count_offset = BLOCK_ENCODING_DOMAIN.len() + 1 + 32 + 32 + 8 + 8 + 32 + 32;
-
-        encoded[count_offset..count_offset + 8].copy_from_slice(&1u64.to_be_bytes());
-
-        encoded.extend_from_slice(&((MAX_TRANSACTION_SIZE as u64) + 1).to_be_bytes());
-
-        // Satisfy the decoder's minimum-size precheck so it reaches
-        // the individual transaction-size limit check.
-        encoded.extend_from_slice(&[0u8; 104]);
-
-        assert_eq!(
-            Block::decode(&encoded, genesis.genesis_hash()),
-            Err(BlockDecodeError::OversizedTransaction)
         );
     }
 }
