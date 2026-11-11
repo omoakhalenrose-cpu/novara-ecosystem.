@@ -284,16 +284,15 @@ fn duplicate_transaction_is_rejected() {
     );
 }
 
-#[test]
-fn too_many_transactions_are_rejected() {
-    let (mut block, context) = setup();
+    #[test]
+    fn too_many_transactions_are_rejected() {
+        let (mut block, context) = setup();
 
-    block.transactions = vec![block.transactions[0].clone(); MAX_TRANSACTIONS_PER_BLOCK + 1];
+        block.transactions = vec![block.transactions[0].clone(); MAX_TRANSACTIONS_PER_BLOCK + 1];
 
-    assert_eq!(
-        validate_block(&block, &context),
-        Err(BlockValidationError::TooManyTransactions)
-    );
-}
-
+        assert_eq!(
+            validate_block(&block, &context),
+            Err(BlockValidationError::TooManyTransactions)
+        );
+    }
 }
