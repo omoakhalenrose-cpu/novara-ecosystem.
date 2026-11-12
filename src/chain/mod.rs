@@ -174,11 +174,8 @@ mod tests {
         let identity = Ed25519Identity::generate();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
@@ -211,11 +208,8 @@ mod tests {
         amount: u128,
     ) -> Block {
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -344,11 +338,8 @@ mod tests {
         let mut chain = Chain::new(&genesis).unwrap();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -400,11 +391,8 @@ mod tests {
         let mut chain = Chain::new(&genesis).unwrap();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let asset_id = AssetId::new([4u8; 32]);
 
@@ -495,15 +483,11 @@ mod tests {
         let mut chain = Chain::new(&genesis).unwrap();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(
-                NetworkId::Development,
-                &identity.public_key(),
-            )
-            .unwrap();
+            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
+                .unwrap();
 
         let asset_id = AssetId::new([4u8; 32]);
 
-        // First transaction succeeds: sender balance becomes 900.
         let transaction_one = Transaction::new(
             1,
             NetworkId::Development,
@@ -518,7 +502,6 @@ mod tests {
 
         let signature_one = sign_transaction(&transaction_one, &identity);
 
-        // Second transaction fails: only 900 remains, but it requests 901.
         let transaction_two = Transaction::new(
             1,
             NetworkId::Development,
@@ -563,14 +546,12 @@ mod tests {
             ))
         );
 
-        // The successful first transaction must also be rolled back.
         assert_eq!(chain.state, previous_state);
 
         assert_eq!(chain.state.balance_of(&sender, &asset_id), 1_000);
         assert_eq!(chain.state.balance_of(&recipient, &asset_id), 1);
         assert_eq!(chain.state.nonce_of(&sender), 0);
 
-        // The failed block must never enter the chain.
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
         assert_eq!(chain.latest_hash(), previous_hash);
