@@ -5,13 +5,13 @@
 //! and State Root verification.
 
 use crate::account::network::NetworkId;
-use crate::block::validation::{BlockValidationContext, BlockValidationError, validate_block};
+use crate::block::validation::{validate_block, BlockValidationContext, BlockValidationError};
 use crate::block::{Block, BlockHash};
 use crate::genesis::{GenesisHash, InitializedGenesis};
 use crate::state::execution::ExecutionError;
 use crate::state::{GenesisInitializationError, State};
-use crate::transaction::ChainId;
 use crate::transaction::validation::ValidationContext;
+use crate::transaction::ChainId;
 
 /// Errors returned by chain initialization and block application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +37,8 @@ impl Chain {
     ///
     /// Genesis represents height zero. The first accepted block has height one.
     pub fn new(genesis: &InitializedGenesis) -> Result<Self, ChainError> {
-        let state = State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
+        let state =
+            State::from_genesis(genesis).map_err(ChainError::GenesisInitialization)?;
 
         Ok(Self {
             network: genesis.config().network,
@@ -110,7 +111,9 @@ impl Chain {
         let expected_height = self
             .height()
             .checked_add(1)
-            .ok_or(ChainError::InvalidBlock(BlockValidationError::WrongHeight))?;
+            .ok_or(ChainError::InvalidBlock(
+                BlockValidationError::WrongHeight,
+            ))?;
 
         let expected_previous_hash = self.latest_hash();
 
@@ -160,6 +163,7 @@ impl Chain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::account::address::AccountId;
     use crate::crypto::ed25519::Ed25519Identity;
     use crate::genesis::{GenesisAllocation, GenesisConfig};
@@ -170,8 +174,11 @@ mod tests {
         let identity = Ed25519Identity::generate();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
 
         let recipient = AccountId::new([8u8; 32]);
         let asset_id = AssetId::new([4u8; 32]);
@@ -204,8 +211,11 @@ mod tests {
         amount: u128,
     ) -> Block {
         let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
 
         let transaction = Transaction::new(
             1,
@@ -226,7 +236,6 @@ mod tests {
             signature,
         };
 
-        // Calculate the expected state after executing this transaction.
         let transaction_context = ValidationContext {
             network: NetworkId::Development,
             chain_id: genesis.chain_id(),
@@ -263,6 +272,7 @@ mod tests {
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
+
         assert_eq!(
             chain.latest_hash().as_bytes(),
             genesis.genesis_hash().as_bytes()
@@ -288,13 +298,15 @@ mod tests {
 
         let mut block = create_valid_block(&chain, &genesis, &identity, recipient, 100);
 
-        // Deliberately corrupt the State Root commitment.
         block.header.state_root = [9u8; 32];
 
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
 
-        assert_eq!(chain.apply_block(block), Err(ChainError::StateRootMismatch));
+        assert_eq!(
+            chain.apply_block(block),
+            Err(ChainError::StateRootMismatch)
+        );
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
@@ -316,7 +328,9 @@ mod tests {
 
         assert_eq!(
             chain.apply_block(block),
-            Err(ChainError::InvalidBlock(BlockValidationError::WrongHeight))
+            Err(ChainError::InvalidBlock(
+                BlockValidationError::WrongHeight
+            ))
         );
 
         assert_eq!(chain.height(), 0);
@@ -330,12 +344,12 @@ mod tests {
         let mut chain = Chain::new(&genesis).unwrap();
 
         let sender =
-            AccountId::try_from_ed25519_public_key(NetworkId::Development, &identity.public_key())
-                .unwrap();
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
 
-        // This signed transaction exceeds the sender's genesis balance.
-        // Build the block directly so the test exercises apply_block's
-        // rejection path rather than panicking inside create_valid_block.
         let transaction = Transaction::new(
             1,
             NetworkId::Development,
@@ -377,6 +391,188 @@ mod tests {
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
         assert_eq!(chain.state, previous_state);
+        assert_eq!(chain.latest_hash(), previous_hash);
+    }
+
+    #[test]
+    fn multiple_transactions_execute_sequentially_in_one_block() {
+        let (genesis, identity, recipient) = test_genesis();
+        let mut chain = Chain::new(&genesis).unwrap();
+
+        let sender =
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
+
+        let asset_id = AssetId::new([4u8; 32]);
+
+        let transaction_one = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            asset_id,
+            100,
+            0,
+        )
+        .unwrap();
+
+        let signature_one = sign_transaction(&transaction_one, &identity);
+
+        let transaction_two = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            asset_id,
+            200,
+            1,
+        )
+        .unwrap();
+
+        let signature_two = sign_transaction(&transaction_two, &identity);
+
+        let signed_transactions = vec![
+            crate::block::SignedTransaction {
+                transaction: transaction_one,
+                signature: signature_one,
+            },
+            crate::block::SignedTransaction {
+                transaction: transaction_two,
+                signature: signature_two,
+            },
+        ];
+
+        let transaction_context = ValidationContext {
+            network: NetworkId::Development,
+            chain_id: genesis.chain_id(),
+        };
+
+        let mut candidate_state = chain.state.clone();
+
+        for signed_transaction in &signed_transactions {
+            candidate_state
+                .execute_transaction(
+                    &signed_transaction.transaction,
+                    &signed_transaction.signature,
+                    &transaction_context,
+                )
+                .unwrap();
+        }
+
+        let expected_state_root = candidate_state.state_root();
+
+        let block = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            chain.latest_hash(),
+            expected_state_root,
+            signed_transactions,
+        );
+
+        assert_eq!(chain.apply_block(block), Ok(()));
+
+        assert_eq!(chain.height(), 1);
+        assert_eq!(chain.block_count(), 1);
+
+        assert_eq!(chain.state.balance_of(&sender, &asset_id), 700);
+        assert_eq!(chain.state.balance_of(&recipient, &asset_id), 301);
+        assert_eq!(chain.state.nonce_of(&sender), 2);
+
+        assert_eq!(chain.state.state_root(), expected_state_root);
+    }
+
+    #[test]
+    fn later_transaction_failure_rolls_back_entire_block() {
+        let (genesis, identity, recipient) = test_genesis();
+        let mut chain = Chain::new(&genesis).unwrap();
+
+        let sender =
+            AccountId::try_from_ed25519_public_key(
+                NetworkId::Development,
+                &identity.public_key(),
+            )
+            .unwrap();
+
+        let asset_id = AssetId::new([4u8; 32]);
+
+        // First transaction succeeds: sender balance becomes 900.
+        let transaction_one = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            asset_id,
+            100,
+            0,
+        )
+        .unwrap();
+
+        let signature_one = sign_transaction(&transaction_one, &identity);
+
+        // Second transaction fails: only 900 remains, but it requests 901.
+        let transaction_two = Transaction::new(
+            1,
+            NetworkId::Development,
+            genesis.chain_id(),
+            sender,
+            recipient,
+            asset_id,
+            901,
+            1,
+        )
+        .unwrap();
+
+        let signature_two = sign_transaction(&transaction_two, &identity);
+
+        let block = Block::new(
+            NetworkId::Development,
+            genesis.chain_id(),
+            genesis.genesis_hash(),
+            1,
+            1_000,
+            chain.latest_hash(),
+            chain.state.state_root(),
+            vec![
+                crate::block::SignedTransaction {
+                    transaction: transaction_one,
+                    signature: signature_one,
+                },
+                crate::block::SignedTransaction {
+                    transaction: transaction_two,
+                    signature: signature_two,
+                },
+            ],
+        );
+
+        let previous_state = chain.state.clone();
+        let previous_hash = chain.latest_hash();
+
+        assert_eq!(
+            chain.apply_block(block),
+            Err(ChainError::TransactionExecution(
+                ExecutionError::InsufficientBalance
+            ))
+        );
+
+        // The successful first transaction must also be rolled back.
+        assert_eq!(chain.state, previous_state);
+
+        assert_eq!(chain.state.balance_of(&sender, &asset_id), 1_000);
+        assert_eq!(chain.state.balance_of(&recipient, &asset_id), 1);
+        assert_eq!(chain.state.nonce_of(&sender), 0);
+
+        // The failed block must never enter the chain.
+        assert_eq!(chain.height(), 0);
+        assert_eq!(chain.block_count(), 0);
         assert_eq!(chain.latest_hash(), previous_hash);
     }
 }
