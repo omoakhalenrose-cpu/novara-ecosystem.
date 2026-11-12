@@ -297,10 +297,7 @@ mod tests {
         let previous_state = chain.state.clone();
         let previous_hash = chain.latest_hash();
 
-        assert_eq!(
-            chain.apply_block(block),
-            Err(ChainError::StateRootMismatch)
-        );
+        assert_eq!(chain.apply_block(block), Err(ChainError::StateRootMismatch));
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.block_count(), 0);
@@ -322,9 +319,7 @@ mod tests {
 
         assert_eq!(
             chain.apply_block(block),
-            Err(ChainError::InvalidBlock(
-                BlockValidationError::WrongHeight
-            ))
+            Err(ChainError::InvalidBlock(BlockValidationError::WrongHeight))
         );
 
         assert_eq!(chain.height(), 0);
