@@ -544,8 +544,9 @@ fn later_transaction_failure_rolls_back_entire_block() {
     assert_eq!(chain.state.balance_of(&sender, &asset_id).unwrap(), 1_000);
     assert_eq!(chain.state.balance_of(&recipient, &asset_id).unwrap(), 1);
     assert_eq!(chain.state.nonce_of(&sender).unwrap(), 0);
-            assert_eq!(chain.height(), 0);
-        assert_eq!(chain.block_count(), 0);
-        assert_eq!(chain.latest_hash(), previous_hash);
+
+    assert_eq!(chain.height(), 0);
+    assert_eq!(chain.block_count(), 0);
+    assert_eq!(chain.latest_hash(), previous_hash);
     }
 }
