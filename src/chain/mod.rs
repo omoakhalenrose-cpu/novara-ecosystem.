@@ -549,5 +549,3 @@ fn later_transaction_failure_rolls_back_entire_block() {
         assert_eq!(chain.latest_hash(), previous_hash);
     }
 }
-
-    
